@@ -4,4 +4,12 @@ BASE.md
 *.jl.*.cov
 docs/build/
 results/
+!results/single_country/
+!results/single_country/.gitkeep
+results/single_country/*
+!results/single_country/.gitkeep
+!results/two_country/
+!results/two_country/.gitkeep
+results/two_country/*
+!results/two_country/.gitkeep
 outputs/

@@ -266,6 +266,11 @@ end
     @test all(row -> isfinite(row.delta_route_ref), compared)
     @test all(row -> isfinite(row.delta_eol_ref), compared)
     @test all(row -> isfinite(row.delta_virgin_use_ref), compared)
+    @test all(row -> isfinite(row.delta_government_net), compared)
+    @test all(row -> row.support_cost >= 0.0, compared)
+    @test all(row -> row.revenue_gain >= 0.0, compared)
+    @test all(row -> isfinite(row.virgin_saving_per_revenue_dollar),
+        filter(row -> row.revenue_gain > 1.0e-10, compared))
     @test all(row -> row.material_saving isa Bool, compared)
     @test all(row -> classify_regime(row) isa Symbol, compared)
     @test all(row -> classify_mechanism(row) isa Symbol, compared)
@@ -324,6 +329,9 @@ end
     @test length(grouped) == 6
     @test all(row -> row.reference_label !== "", grouped)
     @test count(row -> row.tau_route_ref == 0.0 && row.delta_virgin_use == 0.0, grouped) == 2
+    @test any(row -> row.support_cost > 0.0, grouped)
+    @test all(row -> isfinite(row.virgin_saving_per_support_dollar),
+        filter(row -> row.support_cost > 1.0e-10, grouped))
 
     frontier = material_saving_frontier(grouped, :tau_route_ref; group_by = [:sigma_routes])
     @test length(frontier) <= 2
@@ -343,6 +351,7 @@ end
     @test paired[1].stronger_material_saving == :virgin_material_tax
     @test paired[1].lower_service_loss == :refurbishment_support
     @test paired[1].higher_government_net == :virgin_material_tax
+    @test paired[1].higher_support_efficiency == :none
 
     @test classify_mechanism((material_saving = true, rebound = false,
         delta_toaster_service = -5.0, delta_virgin_use = -1.0,
