@@ -1,0 +1,7 @@
+.DS_Store
+BASE.md
+*.jl.cov
+*.jl.*.cov
+docs/build/
+results/
+outputs/

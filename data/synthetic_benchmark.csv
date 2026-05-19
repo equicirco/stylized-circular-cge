@@ -1,0 +1,16 @@
+category,name,value,description
+stock,S0,200.0,Opening durable toaster stock
+parameter,delta,0.25,Retirement rate used to compute an EOL flow of 50
+factor,LAB,200.0,Synthetic labor endowment
+factor,CAP,150.0,Synthetic capital endowment
+final_demand,BRD,200.0,Household bread demand
+final_demand,TST,200.0,Household toaster-service demand
+route_demand,NEW,100.0,New toaster route used by TST
+route_demand,REF,40.0,Refurbished toaster route used by TST
+route_demand,REP,30.0,Repaired toaster route used by TST
+route_demand,REU,30.0,Reused toaster route used by TST
+eol_allocation,REF,10.0,EOL value flow to refurbishment
+eol_allocation,REP,10.0,EOL value flow to repair
+eol_allocation,REU,20.0,EOL value flow to reuse
+eol_allocation,REC,10.0,EOL value flow to recycling
+eol_allocation,INC,0.0,Incineration value flow in the monetary SAM
