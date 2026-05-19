@@ -81,6 +81,33 @@ end
     @test balance.row_sums[:CAP] == 150.0
 end
 
+@testset "two-country SAM" begin
+    sam = two_country_sam()
+    balance = two_country_sam_balance(sam)
+    @test balance.max_abs_imbalance == 0.0
+    @test sam.values[(:VMTL_M, :NEW_C)] == 30.0
+    @test sam.values[(:VMTL_M, :REF_C)] == 6.0
+    @test sam.values[(:VMTL_M, :REP_C)] == 4.0
+    @test sam.values[(:BRD_M, :HOH_M)] == balance.row_sums[:LAB_M]
+    @test sam.values[(:BRD_C, :HOH_C)] == balance.row_sums[:LAB_C]
+    @test balance.row_sums[:NFA] == 40.0
+    @test balance.column_sums[:NFA] == 40.0
+
+    aggregated = aggregate_two_country_sam(sam)
+    single = synthetic_sam()
+    for row in single.accounts, col in single.accounts
+        @test aggregated.values[(row, col)] == single.values[(row, col)]
+    end
+
+    benchmark = two_country_benchmark()
+    @test benchmark.output[:VMTL_M] == 40.0
+    @test benchmark.output[:TST_C] == 200.0
+    @test benchmark.output[:BRD_M] == benchmark.disposable_income_m
+    @test benchmark.output[:BRD_C] + benchmark.output[:TST_C] == benchmark.prefiscal_income_c
+    @test benchmark.material_input[(:VMTL, :NEW)] == 30.0
+    @test benchmark.nfa_transfer == 40.0
+end
+
 @testset "policy wedges" begin
     policy = with_wedge(zero_policy(), :material, :VMTL, 0.25)
     @test policy.material[:VMTL] == 0.25
@@ -127,6 +154,14 @@ end
     @test isapprox(out.recycled_use, sum(values(out.recycled_use_by_route)); atol = 1.0e-6)
     @test isapprox(sum(values(out.route_share)), 1.0; atol = 1.0e-6)
     @test isapprox(sum(values(out.eol_share)), 1.0; atol = 1.0e-6)
+    @test out.activity.quantity[:BRD] == out.bread
+    @test out.activity.quantity[:VMTL] == out.virgin_metal
+    @test isapprox(out.factor.by_factor[:LAB],
+        sum(out.factor.use[(:LAB, a)] for a in StylizedCircularCGE.PRODUCTION_ACTIVITIES);
+        atol = 1.0e-6)
+    @test isapprox(out.factor.by_activity[:REF],
+        out.factor.use[(:LAB, :REF)] + out.factor.use[(:CAP, :REF)];
+        atol = 1.0e-6)
 end
 
 @testset "fiscal closure" begin
@@ -198,6 +233,76 @@ end
     test_closed_fiscal_markets(high_allocation)
 end
 
+@testset "two-country fiscal extension" begin
+    result = solve(two_country_fiscal_baseline(replicate_benchmark = true))
+    residuals = two_country_benchmark_residuals(result)
+    @test residuals.max_abs <= 1.0e-5
+
+    out = two_country_indicators(solve(two_country_fiscal_baseline()))
+    @test out.closure == :two_country_fiscal
+    @test isapprox(out.bread_m, 25.0; atol = 1.0e-4)
+    @test isapprox(out.bread_c, 175.0; atol = 1.0e-4)
+    @test isapprox(out.toaster_service_c, 200.0; atol = 1.0e-4)
+    @test isapprox(out.virgin_metal_m, out.virgin_imports_c; atol = 1.0e-6)
+    @test isapprox(out.recycled_metal_c, out.recycled_use_c; atol = 1.0e-6)
+    @test isapprox(out.fiscal.household_income_m, 25.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.household_income_c, 375.0; atol = 1.0e-4)
+    @test abs(out.fiscal.government_net_c) <= 1.0e-6
+
+    taxed = two_country_indicators(solve(two_country_fiscal_baseline(
+        policy = single_wedge(:material, :VMTL, 0.25))))
+    @test taxed.prices.material[:VMTL] > out.prices.material[:VMTL]
+    @test taxed.fiscal.government_revenue_c > 0.0
+    @test taxed.fiscal.government_net_c > 0.0
+
+    supported = two_country_indicators(solve(two_country_fiscal_baseline(
+        policy = single_wedge(:route, :REF, -0.25))))
+    @test supported.route_share[:REF] > out.route_share[:REF]
+    @test supported.prices.route[:REF] < out.prices.route[:REF]
+    @test supported.fiscal.government_subsidy_c > 0.0
+
+    specs = two_country_policy_grid(:material, :VMTL, [0.0, 0.25])
+    records = run_two_country_grid(specs)
+    @test length(records) == 2
+    @test isempty(two_country_closed_economy_failures(records))
+    @test assert_two_country_closed_economy_results(records) == records
+
+    rows = two_country_result_rows(records)
+    @test all(row -> row.closure == :two_country_fiscal, rows)
+    @test all(row -> row.max_abs_market_residual <= 1.0e-5, rows)
+    @test all(row -> isapprox(row.virgin_metal_m, row.virgin_imports_c; atol = 1.0e-6), rows)
+    @test all(row -> row.activity_vmtl_m == row.activity_vmtl, rows)
+
+    compared = compare_two_country_to_group_reference(records, [:sigma_routes];
+        reference_filter = row -> row.tau_material_vmtl == 0.0)
+    @test length(compared) == 2
+    @test any(row -> row.transmission === :reference, compared)
+    @test any(row -> row.upstream_output_reduction_m > 0.0, compared)
+    @test all(row -> row.upstream_output_reduction_per_virgin_saving >= 0.0 ||
+                     isnan(row.upstream_output_reduction_per_virgin_saving), compared)
+
+    summary = summarize_two_country_comparison(compared)
+    @test summary.count == 2
+    flat_summary = two_country_summary_row(summary)
+    @test flat_summary.transmission_reference == 1
+
+    activity_distribution = two_country_distributional_activity_summary(compared;
+        group_by = [:tau_material_vmtl])
+    @test any(row -> row.country === :M && row.activity === :VMTL, activity_distribution)
+
+    factor_distribution = two_country_distributional_factor_summary(compared;
+        group_by = [:tau_material_vmtl])
+    @test any(row -> row.country === :M && row.activity === :VMTL, factor_distribution)
+
+    output_dir = mktempdir()
+    paths = write_two_country_experiment_bundle(output_dir, records;
+        reference = records[1], basename = "two_country_grid")
+    @test isfile(paths.results)
+    @test isfile(paths.comparison)
+    @test isfile(paths.summary)
+    @test occursin("upstream_output_reduction_m", read(paths.comparison, String))
+end
+
 @testset "policy response" begin
     base = indicators(solve())
     taxed = indicators(solve(fiscal_baseline(policy = single_wedge(:material, :VMTL, 0.5))))
@@ -251,6 +356,12 @@ end
     @test all(row -> row.eta_service == default_parameters().eta_service, rows)
     @test all(row -> row.stock0 == 200.0, rows)
     @test all(row -> row.delta == default_parameters().delta, rows)
+    @test all(row -> row.activity_brd > 0.0, rows)
+    @test all(row -> row.factor_lab_total > 0.0, rows)
+    @test all(row -> isapprox(row.factor_lab_total,
+            row.factor_lab_brd + row.factor_lab_vmtl + row.factor_lab_rmtl +
+            row.factor_lab_new + row.factor_lab_ref + row.factor_lab_rep +
+            row.factor_lab_reu; atol = 1.0e-6), rows)
     @test all(row -> isapprox(row.virgin_use,
             row.virgin_use_new + row.virgin_use_ref + row.virgin_use_rep; atol = 1.0e-6), rows)
     @test all(row -> isapprox(row.recycled_use,
@@ -266,6 +377,9 @@ end
     @test all(row -> isfinite(row.delta_route_ref), compared)
     @test all(row -> isfinite(row.delta_eol_ref), compared)
     @test all(row -> isfinite(row.delta_virgin_use_ref), compared)
+    @test all(row -> isfinite(row.delta_activity_new), compared)
+    @test all(row -> isfinite(row.delta_factor_lab_ref), compared)
+    @test all(row -> isfinite(row.delta_factor_cap_share_new), compared)
     @test all(row -> isfinite(row.delta_government_net), compared)
     @test all(row -> row.support_cost >= 0.0, compared)
     @test all(row -> row.revenue_gain >= 0.0, compared)
@@ -296,6 +410,17 @@ end
     @test length(screen) == 2
     @test screen[1].abs_effect_range >= screen[2].abs_effect_range
     @test all(row -> row.outcome == :pct_virgin_use, screen)
+
+    activity_distribution = distributional_activity_summary(compared; group_by = [:tau_material_vmtl])
+    @test any(row -> row.dimension === :activity_output && row.activity === :REF,
+        activity_distribution)
+    @test all(row -> isfinite(row.expansion_share), activity_distribution)
+
+    factor_distribution = distributional_factor_summary(compared; group_by = [:tau_material_vmtl])
+    @test any(row -> row.dimension === :factor_use && row.factor === :LAB &&
+                     row.activity === :REF, factor_distribution)
+    @test any(row -> row.dimension === :factor_use && row.factor === :CAP &&
+                     row.activity === :TOTAL, factor_distribution)
 
     csv_path = joinpath(mktempdir(), "comparison.csv")
     @test write_rows_csv(csv_path, compared) == csv_path

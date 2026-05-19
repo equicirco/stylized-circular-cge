@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "0209591e11d6197297e74463c4c02e1d3d0fd8a1"
+project_hash = "757570613ca2c5922485057c25a01bbf8ad6a639"
 
 [[deps.ASL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -613,7 +613,7 @@ uuid = "f489334b-da3d-4c2e-b8f0-e476e12c162b"
 version = "1.11.0"
 
 [[deps.StylizedCircularCGE]]
-deps = ["Ipopt", "JCGEBlocks", "JCGECalibrate", "JCGECore", "JCGERuntime", "JuMP"]
+deps = ["CSV", "Ipopt", "JCGEBlocks", "JCGECalibrate", "JCGECore", "JCGERuntime", "JuMP"]
 path = "."
 uuid = "ca599265-44c5-4395-b532-dc6e1aa34b14"
 version = "0.1.0"

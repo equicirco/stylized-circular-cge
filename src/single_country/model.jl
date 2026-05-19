@@ -926,6 +926,42 @@ function _price_accounting(result)
     )
 end
 
+function _activity_accounting(result)
+    quantity = Dict(a => _solved_value(result, _global_var(:Z, a))
+        for a in PRODUCTION_ACTIVITIES)
+    total = sum(values(quantity))
+    share = Dict(a => total <= 1.0e-12 ? NaN : quantity[a] / total
+        for a in PRODUCTION_ACTIVITIES)
+    return (
+        quantity = quantity,
+        total = total,
+        share = share,
+    )
+end
+
+function _factor_accounting(result)
+    use = Dict((h, a) => _solved_value(result, _global_var(:F, h, a))
+        for h in FACTORS for a in PRODUCTION_ACTIVITIES)
+    by_factor = Dict(h => sum(use[(h, a)] for a in PRODUCTION_ACTIVITIES)
+        for h in FACTORS)
+    by_activity = Dict(a => sum(use[(h, a)] for h in FACTORS)
+        for a in PRODUCTION_ACTIVITIES)
+    total = sum(values(by_activity))
+    factor_activity_share = Dict((h, a) =>
+            by_factor[h] <= 1.0e-12 ? NaN : use[(h, a)] / by_factor[h]
+        for h in FACTORS for a in PRODUCTION_ACTIVITIES)
+    activity_share = Dict(a => total <= 1.0e-12 ? NaN : by_activity[a] / total
+        for a in PRODUCTION_ACTIVITIES)
+    return (
+        use = use,
+        by_factor = by_factor,
+        by_activity = by_activity,
+        total = total,
+        factor_activity_share = factor_activity_share,
+        activity_share = activity_share,
+    )
+end
+
 function _max_abs(values)
     finite_values = [abs(Float64(value)) for value in values if isfinite(Float64(value))]
     isempty(finite_values) && return NaN
@@ -1108,6 +1144,8 @@ function indicators(result)
         route_share = Dict(route => routes[route] / total_routes for route in ROUTES),
         eol_share = Dict(use => eol[use] / sum(values(eol)) for use in EOL_USES),
         wedge_accounting = _wedge_accounting(result, policy),
+        activity = _activity_accounting(result),
+        factor = _factor_accounting(result),
         prices = _price_accounting(result),
         fiscal = _fiscal_accounting(result),
         closed_economy = residuals,

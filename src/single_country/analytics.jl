@@ -1,5 +1,5 @@
 function _pct_change(value, reference)
-    abs(reference) <= 1.0e-12 && return NaN
+    abs(reference) <= 1.0e-4 && return NaN
     return (value - reference) / abs(reference)
 end
 
@@ -9,6 +9,9 @@ function _ratio_or_nan(numerator, denominator; tol::Real = 1.0e-12)
 end
 
 function _comparison_fields(row::NamedTuple, ref::NamedTuple)
+    delta(field::Symbol) = getproperty(row, field) - getproperty(ref, field)
+    pct(field::Symbol) = _pct_change(getproperty(row, field), getproperty(ref, field))
+
     delta_toaster_service = row.toaster_service - ref.toaster_service
     delta_virgin_use = row.virgin_use - ref.virgin_use
     delta_recycled_use = row.recycled_use - ref.recycled_use
@@ -41,6 +44,98 @@ function _comparison_fields(row::NamedTuple, ref::NamedTuple)
         delta_recycled_use_new = row.recycled_use_new - ref.recycled_use_new,
         delta_recycled_use_ref = row.recycled_use_ref - ref.recycled_use_ref,
         delta_recycled_use_rep = row.recycled_use_rep - ref.recycled_use_rep,
+        delta_activity_brd = delta(:activity_brd),
+        delta_activity_vmtl = delta(:activity_vmtl),
+        delta_activity_rmtl = delta(:activity_rmtl),
+        delta_activity_new = delta(:activity_new),
+        delta_activity_ref = delta(:activity_ref),
+        delta_activity_rep = delta(:activity_rep),
+        delta_activity_reu = delta(:activity_reu),
+        delta_activity_total = delta(:activity_total),
+        pct_activity_brd = pct(:activity_brd),
+        pct_activity_vmtl = pct(:activity_vmtl),
+        pct_activity_rmtl = pct(:activity_rmtl),
+        pct_activity_new = pct(:activity_new),
+        pct_activity_ref = pct(:activity_ref),
+        pct_activity_rep = pct(:activity_rep),
+        pct_activity_reu = pct(:activity_reu),
+        pct_activity_total = pct(:activity_total),
+        delta_activity_share_brd = delta(:activity_share_brd),
+        delta_activity_share_vmtl = delta(:activity_share_vmtl),
+        delta_activity_share_rmtl = delta(:activity_share_rmtl),
+        delta_activity_share_new = delta(:activity_share_new),
+        delta_activity_share_ref = delta(:activity_share_ref),
+        delta_activity_share_rep = delta(:activity_share_rep),
+        delta_activity_share_reu = delta(:activity_share_reu),
+        delta_factor_total = delta(:factor_total),
+        delta_factor_lab_total = delta(:factor_lab_total),
+        delta_factor_cap_total = delta(:factor_cap_total),
+        pct_factor_total = pct(:factor_total),
+        pct_factor_lab_total = pct(:factor_lab_total),
+        pct_factor_cap_total = pct(:factor_cap_total),
+        delta_activity_factor_brd = delta(:activity_factor_brd),
+        delta_activity_factor_vmtl = delta(:activity_factor_vmtl),
+        delta_activity_factor_rmtl = delta(:activity_factor_rmtl),
+        delta_activity_factor_new = delta(:activity_factor_new),
+        delta_activity_factor_ref = delta(:activity_factor_ref),
+        delta_activity_factor_rep = delta(:activity_factor_rep),
+        delta_activity_factor_reu = delta(:activity_factor_reu),
+        pct_activity_factor_brd = pct(:activity_factor_brd),
+        pct_activity_factor_vmtl = pct(:activity_factor_vmtl),
+        pct_activity_factor_rmtl = pct(:activity_factor_rmtl),
+        pct_activity_factor_new = pct(:activity_factor_new),
+        pct_activity_factor_ref = pct(:activity_factor_ref),
+        pct_activity_factor_rep = pct(:activity_factor_rep),
+        pct_activity_factor_reu = pct(:activity_factor_reu),
+        delta_activity_factor_share_brd = delta(:activity_factor_share_brd),
+        delta_activity_factor_share_vmtl = delta(:activity_factor_share_vmtl),
+        delta_activity_factor_share_rmtl = delta(:activity_factor_share_rmtl),
+        delta_activity_factor_share_new = delta(:activity_factor_share_new),
+        delta_activity_factor_share_ref = delta(:activity_factor_share_ref),
+        delta_activity_factor_share_rep = delta(:activity_factor_share_rep),
+        delta_activity_factor_share_reu = delta(:activity_factor_share_reu),
+        delta_factor_lab_brd = delta(:factor_lab_brd),
+        delta_factor_lab_vmtl = delta(:factor_lab_vmtl),
+        delta_factor_lab_rmtl = delta(:factor_lab_rmtl),
+        delta_factor_lab_new = delta(:factor_lab_new),
+        delta_factor_lab_ref = delta(:factor_lab_ref),
+        delta_factor_lab_rep = delta(:factor_lab_rep),
+        delta_factor_lab_reu = delta(:factor_lab_reu),
+        delta_factor_cap_brd = delta(:factor_cap_brd),
+        delta_factor_cap_vmtl = delta(:factor_cap_vmtl),
+        delta_factor_cap_rmtl = delta(:factor_cap_rmtl),
+        delta_factor_cap_new = delta(:factor_cap_new),
+        delta_factor_cap_ref = delta(:factor_cap_ref),
+        delta_factor_cap_rep = delta(:factor_cap_rep),
+        delta_factor_cap_reu = delta(:factor_cap_reu),
+        pct_factor_lab_brd = pct(:factor_lab_brd),
+        pct_factor_lab_vmtl = pct(:factor_lab_vmtl),
+        pct_factor_lab_rmtl = pct(:factor_lab_rmtl),
+        pct_factor_lab_new = pct(:factor_lab_new),
+        pct_factor_lab_ref = pct(:factor_lab_ref),
+        pct_factor_lab_rep = pct(:factor_lab_rep),
+        pct_factor_lab_reu = pct(:factor_lab_reu),
+        pct_factor_cap_brd = pct(:factor_cap_brd),
+        pct_factor_cap_vmtl = pct(:factor_cap_vmtl),
+        pct_factor_cap_rmtl = pct(:factor_cap_rmtl),
+        pct_factor_cap_new = pct(:factor_cap_new),
+        pct_factor_cap_ref = pct(:factor_cap_ref),
+        pct_factor_cap_rep = pct(:factor_cap_rep),
+        pct_factor_cap_reu = pct(:factor_cap_reu),
+        delta_factor_lab_share_brd = delta(:factor_lab_share_brd),
+        delta_factor_lab_share_vmtl = delta(:factor_lab_share_vmtl),
+        delta_factor_lab_share_rmtl = delta(:factor_lab_share_rmtl),
+        delta_factor_lab_share_new = delta(:factor_lab_share_new),
+        delta_factor_lab_share_ref = delta(:factor_lab_share_ref),
+        delta_factor_lab_share_rep = delta(:factor_lab_share_rep),
+        delta_factor_lab_share_reu = delta(:factor_lab_share_reu),
+        delta_factor_cap_share_brd = delta(:factor_cap_share_brd),
+        delta_factor_cap_share_vmtl = delta(:factor_cap_share_vmtl),
+        delta_factor_cap_share_rmtl = delta(:factor_cap_share_rmtl),
+        delta_factor_cap_share_new = delta(:factor_cap_share_new),
+        delta_factor_cap_share_ref = delta(:factor_cap_share_ref),
+        delta_factor_cap_share_rep = delta(:factor_cap_share_rep),
+        delta_factor_cap_share_reu = delta(:factor_cap_share_reu),
         delta_ref_share = row.route_ref_share - ref.route_ref_share,
         delta_rec_share = row.eol_rec_share - ref.eol_rec_share,
         pct_toaster_service = _pct_change(row.toaster_service, ref.toaster_service),
@@ -391,6 +486,203 @@ function sensitivity_screen(rows::AbstractVector{<:NamedTuple},
     outcome::Symbol,
     parameters::AbstractVector{Symbol})
     return RuntimeExperiments.sensitivity_screen(rows, outcome, parameters)
+end
+
+const DISTRIBUTIONAL_ACTIVITY_SPECS = (
+    (activity = :BRD, component = :bread, delta = :delta_activity_brd,
+        pct = :pct_activity_brd, activity_share = :delta_activity_share_brd,
+        factor_share = :delta_activity_factor_share_brd),
+    (activity = :VMTL, component = :virgin_material, delta = :delta_activity_vmtl,
+        pct = :pct_activity_vmtl, activity_share = :delta_activity_share_vmtl,
+        factor_share = :delta_activity_factor_share_vmtl),
+    (activity = :RMTL, component = :recycled_material, delta = :delta_activity_rmtl,
+        pct = :pct_activity_rmtl, activity_share = :delta_activity_share_rmtl,
+        factor_share = :delta_activity_factor_share_rmtl),
+    (activity = :NEW, component = :new_production, delta = :delta_activity_new,
+        pct = :pct_activity_new, activity_share = :delta_activity_share_new,
+        factor_share = :delta_activity_factor_share_new),
+    (activity = :REF, component = :refurbishment, delta = :delta_activity_ref,
+        pct = :pct_activity_ref, activity_share = :delta_activity_share_ref,
+        factor_share = :delta_activity_factor_share_ref),
+    (activity = :REP, component = :repair, delta = :delta_activity_rep,
+        pct = :pct_activity_rep, activity_share = :delta_activity_share_rep,
+        factor_share = :delta_activity_factor_share_rep),
+    (activity = :REU, component = :reuse, delta = :delta_activity_reu,
+        pct = :pct_activity_reu, activity_share = :delta_activity_share_reu,
+        factor_share = :delta_activity_factor_share_reu),
+)
+
+const DISTRIBUTIONAL_FACTOR_TOTAL_SPECS = (
+    (factor = :LAB, activity = :TOTAL, component = :labor_total,
+        delta = :delta_factor_lab_total, pct = :pct_factor_lab_total,
+        allocation_share = nothing),
+    (factor = :CAP, activity = :TOTAL, component = :capital_total,
+        delta = :delta_factor_cap_total, pct = :pct_factor_cap_total,
+        allocation_share = nothing),
+)
+
+const DISTRIBUTIONAL_FACTOR_ACTIVITY_SPECS = (
+    (factor = :LAB, activity = :BRD, component = :labor_bread,
+        delta = :delta_factor_lab_brd, pct = :pct_factor_lab_brd,
+        allocation_share = :delta_factor_lab_share_brd),
+    (factor = :LAB, activity = :VMTL, component = :labor_virgin_material,
+        delta = :delta_factor_lab_vmtl, pct = :pct_factor_lab_vmtl,
+        allocation_share = :delta_factor_lab_share_vmtl),
+    (factor = :LAB, activity = :RMTL, component = :labor_recycled_material,
+        delta = :delta_factor_lab_rmtl, pct = :pct_factor_lab_rmtl,
+        allocation_share = :delta_factor_lab_share_rmtl),
+    (factor = :LAB, activity = :NEW, component = :labor_new_production,
+        delta = :delta_factor_lab_new, pct = :pct_factor_lab_new,
+        allocation_share = :delta_factor_lab_share_new),
+    (factor = :LAB, activity = :REF, component = :labor_refurbishment,
+        delta = :delta_factor_lab_ref, pct = :pct_factor_lab_ref,
+        allocation_share = :delta_factor_lab_share_ref),
+    (factor = :LAB, activity = :REP, component = :labor_repair,
+        delta = :delta_factor_lab_rep, pct = :pct_factor_lab_rep,
+        allocation_share = :delta_factor_lab_share_rep),
+    (factor = :LAB, activity = :REU, component = :labor_reuse,
+        delta = :delta_factor_lab_reu, pct = :pct_factor_lab_reu,
+        allocation_share = :delta_factor_lab_share_reu),
+    (factor = :CAP, activity = :BRD, component = :capital_bread,
+        delta = :delta_factor_cap_brd, pct = :pct_factor_cap_brd,
+        allocation_share = :delta_factor_cap_share_brd),
+    (factor = :CAP, activity = :VMTL, component = :capital_virgin_material,
+        delta = :delta_factor_cap_vmtl, pct = :pct_factor_cap_vmtl,
+        allocation_share = :delta_factor_cap_share_vmtl),
+    (factor = :CAP, activity = :RMTL, component = :capital_recycled_material,
+        delta = :delta_factor_cap_rmtl, pct = :pct_factor_cap_rmtl,
+        allocation_share = :delta_factor_cap_share_rmtl),
+    (factor = :CAP, activity = :NEW, component = :capital_new_production,
+        delta = :delta_factor_cap_new, pct = :pct_factor_cap_new,
+        allocation_share = :delta_factor_cap_share_new),
+    (factor = :CAP, activity = :REF, component = :capital_refurbishment,
+        delta = :delta_factor_cap_ref, pct = :pct_factor_cap_ref,
+        allocation_share = :delta_factor_cap_share_ref),
+    (factor = :CAP, activity = :REP, component = :capital_repair,
+        delta = :delta_factor_cap_rep, pct = :pct_factor_cap_rep,
+        allocation_share = :delta_factor_cap_share_rep),
+    (factor = :CAP, activity = :REU, component = :capital_reuse,
+        delta = :delta_factor_cap_reu, pct = :pct_factor_cap_reu,
+        allocation_share = :delta_factor_cap_share_reu),
+)
+
+const DISTRIBUTIONAL_FACTOR_SPECS =
+    (DISTRIBUTIONAL_FACTOR_TOTAL_SPECS..., DISTRIBUTIONAL_FACTOR_ACTIVITY_SPECS...)
+
+function _as_float_or_nan(value)
+    ismissing(value) && return NaN
+    return Float64(value)
+end
+
+function _finite_mean(values::AbstractVector)
+    finite = [value for value in (_as_float_or_nan(value) for value in values) if isfinite(value)]
+    isempty(finite) && return NaN
+    return sum(finite) / length(finite)
+end
+
+function _field_values(rows, field::Symbol)
+    return [getproperty(row, field) for row in rows]
+end
+
+function _optional_field_mean(rows, field)
+    field === nothing && return NaN
+    return _finite_mean(_field_values(rows, field))
+end
+
+function _signed_share(rows, field::Symbol, sign::Symbol; tol::Real = 1.0e-8)
+    isempty(rows) && return NaN
+    n =
+        if sign === :positive
+            count(row -> begin
+                    value = _as_float_or_nan(getproperty(row, field))
+                    isfinite(value) && value > tol
+                end, rows)
+        elseif sign === :negative
+            count(row -> begin
+                    value = _as_float_or_nan(getproperty(row, field))
+                    isfinite(value) && value < -tol
+                end, rows)
+        else
+            error("Unknown sign $(sign). Use :positive or :negative.")
+        end
+    return n / length(rows)
+end
+
+function _distributional_group_keys(rows, group_by::AbstractVector{Symbol})
+    return sort(collect(Set(Tuple(getproperty(row, field) for field in group_by)
+                for row in rows)); by = string)
+end
+
+function _distributional_prefix(key::Tuple, group_by::AbstractVector{Symbol})
+    return NamedTuple{Tuple(group_by)}(key)
+end
+
+function _distributional_subset(rows, key::Tuple, group_by::AbstractVector{Symbol})
+    return [row for row in rows if Tuple(getproperty(row, field) for field in group_by) == key]
+end
+
+"""
+    distributional_activity_summary(rows; group_by=[:strategy])
+
+Summarize sector-output incidence for comparison rows. The result is diagnostic:
+it reports activity reallocations and factor-use shares, not welfare effects.
+"""
+function distributional_activity_summary(rows::AbstractVector;
+    group_by::AbstractVector{Symbol} = [:strategy])
+    out = NamedTuple[]
+    for key in _distributional_group_keys(rows, group_by)
+        subset = _distributional_subset(rows, key, group_by)
+        prefix = _distributional_prefix(key, group_by)
+        for spec in DISTRIBUTIONAL_ACTIVITY_SPECS
+            push!(out, merge(prefix, (
+                dimension = :activity_output,
+                activity = spec.activity,
+                component = spec.component,
+                count = length(subset),
+                mean_delta_output = _finite_mean(_field_values(subset, spec.delta)),
+                mean_pct_output = _finite_mean(_field_values(subset, spec.pct)),
+                mean_delta_activity_share =
+                    _finite_mean(_field_values(subset, spec.activity_share)),
+                mean_delta_factor_use_share =
+                    _finite_mean(_field_values(subset, spec.factor_share)),
+                expansion_share = _signed_share(subset, spec.delta, :positive),
+                contraction_share = _signed_share(subset, spec.delta, :negative),
+            )))
+        end
+    end
+    return out
+end
+
+"""
+    distributional_factor_summary(rows; group_by=[:strategy])
+
+Summarize factor-use incidence for comparison rows. Because the current
+single-country closure has no factor-price distribution, these rows describe
+labor and capital reallocations across activities.
+"""
+function distributional_factor_summary(rows::AbstractVector;
+    group_by::AbstractVector{Symbol} = [:strategy])
+    out = NamedTuple[]
+    for key in _distributional_group_keys(rows, group_by)
+        subset = _distributional_subset(rows, key, group_by)
+        prefix = _distributional_prefix(key, group_by)
+        for spec in DISTRIBUTIONAL_FACTOR_SPECS
+            push!(out, merge(prefix, (
+                dimension = :factor_use,
+                factor = spec.factor,
+                activity = spec.activity,
+                component = spec.component,
+                count = length(subset),
+                mean_delta_factor_use = _finite_mean(_field_values(subset, spec.delta)),
+                mean_pct_factor_use = _finite_mean(_field_values(subset, spec.pct)),
+                mean_delta_factor_allocation_share =
+                    _optional_field_mean(subset, spec.allocation_share),
+                expansion_share = _signed_share(subset, spec.delta, :positive),
+                contraction_share = _signed_share(subset, spec.delta, :negative),
+            )))
+        end
+    end
+    return out
 end
 
 function _minmax(values)
