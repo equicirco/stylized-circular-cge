@@ -1,182 +1,167 @@
 """
-Model-specific block for the first one-period circular economy target.
-
-The block is a compact planner-form equilibrium scaffold: it uses the JCGE
-RunSpec/build/runtime interface while keeping the first circular constraints
-inside this repository. Generic functionality can be moved to JCGEBlocks later if
-it proves reusable.
+Build methods and model assembly for the single-country circular CGE blocks.
 """
-struct CircularOnePeriodBlock <: JCGECore.AbstractBlock
-    name::Symbol
-    params::NamedTuple
-    benchmark::NamedTuple
-    replicate_benchmark::Bool
-    policy::PolicyWedges
+
+function _require_single_model(ctx::JCGERuntime.KernelContext, block)
+    ctx.model isa JuMP.Model ||
+        error("$(typeof(block)) requires a JuMP-backed JCGE runtime context")
+    return nothing
 end
 
-struct CircularFiscalOnePeriodBlock <: JCGECore.AbstractBlock
-    name::Symbol
-    params::NamedTuple
-    benchmark::NamedTuple
-    replicate_benchmark::Bool
-    policy::PolicyWedges
-end
-
-function _global_var(base::Symbol, idxs::Symbol...)
-    isempty(idxs) && return base
-    return Symbol(string(base), "_", join(string.(idxs), "_"))
-end
-
-function _ensure_var!(ctx::JCGERuntime.KernelContext, name::Symbol; lower=1.0e-6, start=nothing)
-    haskey(ctx.variables, name) && return ctx.variables[name]
-    model = ctx.model
-    if model isa JuMP.Model
-        if lower === nothing
-            var = start === nothing ?
-                  JuMP.@variable(model, base_name = string(name)) :
-                  JuMP.@variable(model, start = start, base_name = string(name))
-        else
-            var = start === nothing ?
-                  JuMP.@variable(model, lower_bound = lower, base_name = string(name)) :
-                  JuMP.@variable(model, lower_bound = lower, start = start, base_name = string(name))
-        end
-    else
-        var = (name = name,)
+function _ensure_single_outputs!(ctx::JCGERuntime.KernelContext, bench)
+    for a in (PRODUCTION_ACTIVITIES..., :TST)
+        _ensure_var!(ctx, _global_var(:Z, a); start = bench.output[a])
     end
-    return JCGERuntime.register_variable!(ctx, name, var)
-end
-
-function _register_constraint!(ctx::JCGERuntime.KernelContext, block,
-    tag::Symbol, constraint; info::String, indices=())
-    JCGERuntime.register_equation!(ctx;
-        tag = tag,
-        block = block.name,
-        payload = (
-            indices = indices,
-            params = block.params,
-            info = info,
-            expr = JCGECore.ERaw(info),
-            constraint = constraint,
-        ))
     return nothing
 end
 
-_closure_kind(::CircularOnePeriodBlock) = :planner
-_closure_kind(::CircularFiscalOnePeriodBlock) = :fiscal
-
-function _register_metadata!(ctx::JCGERuntime.KernelContext, block)
-    JCGERuntime.register_equation!(ctx;
-        tag = :metadata,
-        block = block.name,
-        payload = (
-            indices = (),
-            params = block.params,
-            benchmark = block.benchmark,
-            policy = block.policy,
-            closure = _closure_kind(block),
-            info = "circular one-period metadata",
-            expr = JCGECore.ERaw("metadata"),
-            constraint = nothing,
-        ))
+function _ensure_single_factors!(ctx::JCGERuntime.KernelContext, bench)
+    for h in FACTORS, a in PRODUCTION_ACTIVITIES
+        _ensure_var!(ctx, _global_var(:F, h, a);
+            start = bench.factor_input[(h, a)])
+    end
     return nothing
 end
 
-function _route_yield(params, route::Symbol)
-    route === :REF && return params.yield.ref
-    route === :REP && return params.yield.rep
-    route === :REU && return params.yield.reu
-    error("No life-extension yield for route $(route)")
+function _ensure_single_eol!(ctx::JCGERuntime.KernelContext, bench)
+    for use in EOL_USES
+        _ensure_var!(ctx, _global_var(:EOL, use);
+            lower = 0.0, start = bench.eol_allocation[use])
+    end
+    return nothing
 end
 
-function _metal_intensity(params, route::Symbol)
-    route === :NEW && return params.metal_intensity.new
-    route === :REF && return params.metal_intensity.ref
-    route === :REP && return params.metal_intensity.rep
-    route === :REU && return params.metal_intensity.reu
-    error("No metal intensity for route $(route)")
+function _ensure_single_material_inputs!(ctx::JCGERuntime.KernelContext, params, bench)
+    for route in MATERIAL_ROUTES
+        _ensure_var!(ctx, _global_var(:MEFF, route);
+            start = _metal_intensity(params, route) * bench.output[route])
+        _ensure_var!(ctx, _global_var(:VUSE, route);
+            start = bench.material_input[(:VMTL, route)])
+        _ensure_var!(ctx, _global_var(:RUSE, route);
+            start = bench.material_input[(:RMTL, route)])
+    end
+    return nothing
 end
 
-function JCGECore.build!(block::CircularOnePeriodBlock,
+function _ensure_single_price_vars!(ctx::JCGERuntime.KernelContext, params, bench,
+    policy::PolicyWedges)
+    _ensure_var!(ctx, :P_BRD; start = 1.0)
+    for use in EOL_USES
+        _ensure_var!(ctx, _global_var(:P_EOL, use); start = _eol_unit_cost(policy, use))
+    end
+    for material in MATERIALS
+        _ensure_var!(ctx, _global_var(:P_MAT, material);
+            start = _material_unit_cost(params, bench, policy, material))
+    end
+    for route in MATERIAL_ROUTES
+        _ensure_var!(ctx, _global_var(:P_MEFF, route); start = 1.0)
+    end
+    for route in ROUTES
+        _ensure_var!(ctx, _global_var(:P_ROUTE, route);
+            start = _route_unit_cost(params, bench, policy, route))
+    end
+    _ensure_var!(ctx, :P_TST; start = 1.0)
+    return nothing
+end
+
+function _ensure_single_fiscal_vars!(ctx::JCGERuntime.KernelContext, params, bench)
+    _ensure_var!(ctx, :Y_PREFISCAL; start = _pre_fiscal_income(params, bench))
+    _ensure_var!(ctx, :Y_HOH; start = _pre_fiscal_income(params, bench))
+    _ensure_var!(ctx, :GOV_NET; lower = nothing, start = 0.0)
+    _ensure_var!(ctx, :GOV_REVENUE; lower = 0.0, start = 0.0)
+    _ensure_var!(ctx, :GOV_SUBSIDY; lower = 0.0, start = 0.0)
+    _ensure_var!(ctx, :GOV_TRANSFER; lower = nothing, start = 0.0)
+    return nothing
+end
+
+function JCGECore.build!(block::SingleCountryBlock{:technology},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    bench = block.benchmark
+    _require_single_model(ctx, block)
+    _ensure_single_outputs!(ctx, bench)
+    _ensure_single_factors!(ctx, bench)
+
+    for a in PRODUCTION_ACTIVITIES
+        beta_lab = bench.factor_share[(:LAB, a)]
+        beta_cap = bench.factor_share[(:CAP, a)]
+        scale = bench.productivity[a]
+        expr = _ele(_evar(:Z, a),
+            _emul(
+                _econst(scale),
+                _epow(_evar(:F, :LAB, a), _econst(beta_lab)),
+                _epow(_evar(:F, :CAP, a), _econst(beta_cap))))
+        _register_ast_equation!(ctx, block, :technology, expr;
+            info = "activity output is limited by calibrated Cobb-Douglas factor technology",
+            indices = (a,))
+    end
+
+    for h in FACTORS
+        expr = _ele(
+            _sum_expr([_evar(:F, h, a) for a in PRODUCTION_ACTIVITIES]),
+            _econst(bench.factor_endowment[h]))
+        _register_ast_equation!(ctx, block, :factor_endowment, expr;
+            info = "aggregate factor use is limited by the available factor endowment",
+            indices = (h,))
+    end
+
+    return nothing
+end
+
+function JCGECore.build!(block::SingleCountryBlock{:eol},
     ctx::JCGERuntime.KernelContext,
     spec::JCGECore.RunSpec)
     params = block.params
     bench = block.benchmark
     policy = block.policy
-    model = ctx.model
-    model isa JuMP.Model || error("CircularOnePeriodBlock requires a JuMP-backed JCGE runtime context")
-    _register_metadata!(ctx, block)
+    _require_single_model(ctx, block)
+    _ensure_single_eol!(ctx, bench)
 
-    z = Dict{Symbol,Any}()
-    for a in (PRODUCTION_ACTIVITIES..., :TST)
-        z[a] = _ensure_var!(ctx, _global_var(:Z, a); start = bench.output[a])
-    end
-
-    factors = Dict{Tuple{Symbol,Symbol},Any}()
-    for h in FACTORS, a in PRODUCTION_ACTIVITIES
-        factors[(h, a)] = _ensure_var!(ctx, _global_var(:F, h, a);
-            start = bench.factor_input[(h, a)])
-    end
-
-    eol = Dict{Symbol,Any}()
     ret = params.delta * bench.stock0
-    for use in EOL_USES
-        eol[use] = _ensure_var!(ctx, _global_var(:EOL, use);
-            lower = 0.0, start = bench.eol_allocation[use])
+    if block.closure === :planner
+        expr = _eeq(_esum(:use, EOL_USES, _evar(:EOL, _eidx(:use))), _econst(ret))
+        _register_ast_equation!(ctx, block, :eol_allocation, expr;
+            info = "end-of-life uses exhaust the returned stock")
+    elseif block.closure === :fiscal
+        eol_shares = _eol_allocation_shares(params, bench, policy)
+        for use in EOL_USES
+            expr = _eeq(_evar(:EOL, use), _econst(eol_shares[use] * ret))
+            _register_ast_equation!(ctx, block, :eol_allocation, expr;
+                info = "EOL allocation follows calibrated policy-adjusted use shares",
+                indices = (use,))
+        end
+    else
+        error("Unsupported single-country closure $(block.closure)")
     end
-
-    metal_eff = Dict{Symbol,Any}()
-    virgin_use = Dict{Symbol,Any}()
-    recycled_use = Dict{Symbol,Any}()
-    for route in MATERIAL_ROUTES
-        metal_eff[route] = _ensure_var!(ctx, _global_var(:MEFF, route);
-            start = _metal_intensity(params, route) * bench.output[route])
-        virgin_use[route] = _ensure_var!(ctx, _global_var(:VUSE, route);
-            start = bench.material_input[(:VMTL, route)])
-        recycled_use[route] = _ensure_var!(ctx, _global_var(:RUSE, route);
-            start = bench.material_input[(:RMTL, route)])
-    end
-
-    for a in PRODUCTION_ACTIVITIES
-        lab = factors[(:LAB, a)]
-        cap = factors[(:CAP, a)]
-        beta_lab = bench.factor_share[(:LAB, a)]
-        beta_cap = bench.factor_share[(:CAP, a)]
-        scale = bench.productivity[a]
-        constraint = JuMP.@NLconstraint(model, z[a] <= scale * lab^beta_lab * cap^beta_cap)
-        _register_constraint!(ctx, block, :technology, constraint;
-            info = "Z[$(a)] <= A[$(a)] * F[LAB,$(a)]^beta * F[CAP,$(a)]^(1-beta)",
-            indices = (a,))
-    end
-
-    for h in FACTORS
-        constraint = JuMP.@constraint(model,
-            sum(factors[(h, a)] for a in PRODUCTION_ACTIVITIES) <= bench.factor_endowment[h])
-        _register_constraint!(ctx, block, :factor_endowment, constraint;
-            info = "sum(F[$(h),a]) <= FF[$(h)]",
-            indices = (h,))
-    end
-
-    constraint = JuMP.@constraint(model, sum(eol[use] for use in EOL_USES) == ret)
-    _register_constraint!(ctx, block, :eol_allocation, constraint;
-        info = "sum(EOL use) == delta * stock0")
 
     for route in (:REF, :REP, :REU)
         y = _route_yield(params, route)
-        constraint = JuMP.@constraint(model, z[route] <= y * eol[route])
-        _register_constraint!(ctx, block, :route_yield, constraint;
-            info = "Z[$(route)] <= yield[$(route)] * EOL[$(route)]",
+        expr = _ele(_evar(:Z, route), _scaled(y, _evar(:EOL, route)))
+        _register_ast_equation!(ctx, block, :route_yield, expr;
+            info = "life-extension route output is limited by available EOL units and route yield",
             indices = (route,))
     end
 
-    constraint = JuMP.@constraint(model, z[:RMTL] <= params.yield.rmtl * eol[:REC])
-    _register_constraint!(ctx, block, :recycling_yield, constraint;
-        info = "Z[RMTL] <= yield[RMTL] * EOL[REC]")
+    expr = _ele(_evar(:Z, :RMTL), _scaled(params.yield.rmtl, _evar(:EOL, :REC)))
+    _register_ast_equation!(ctx, block, :recycling_yield, expr;
+        info = "recycled material output is limited by recycling EOL units and recycling yield")
+
+    return nothing
+end
+
+function JCGECore.build!(block::SingleCountryBlock{:material},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    params = block.params
+    bench = block.benchmark
+    _require_single_model(ctx, block)
+    _ensure_single_material_inputs!(ctx, params, bench)
 
     for route in MATERIAL_ROUTES
         alpha = _metal_intensity(params, route)
-        constraint = JuMP.@constraint(model, alpha * z[route] <= metal_eff[route])
-        _register_constraint!(ctx, block, :route_material_requirement, constraint;
-            info = "metal_intensity[$(route)] * Z[$(route)] <= MEFF[$(route)]",
+        expr = _ele(_scaled(alpha, _evar(:Z, route)), _evar(:MEFF, route))
+        _register_ast_equation!(ctx, block, :route_material_requirement, expr;
+            info = "material-using route output requires effective metal input",
             indices = (route,))
     end
 
@@ -187,102 +172,120 @@ function JCGECore.build!(block::CircularOnePeriodBlock,
         theta_r = bench.route_metal_share[(:RMTL, route)]
         scale = bench.metal_scale[route]
         if abs(rho_metal) < 1.0e-8
-            constraint = JuMP.@NLconstraint(model,
-                metal_eff[route] <= scale * virgin_use[route]^theta_v * (phi * recycled_use[route])^theta_r)
+            rhs = _emul(
+                _econst(scale),
+                _epow(_evar(:VUSE, route), _econst(theta_v)),
+                _epow(_scaled(phi, _evar(:RUSE, route)), _econst(theta_r)))
         else
-            constraint = JuMP.@NLconstraint(model,
-                metal_eff[route] <=
-                scale *
-                (theta_v * virgin_use[route]^rho_metal +
-                 theta_r * (phi * recycled_use[route])^rho_metal)^(1.0 / rho_metal))
+            rhs = _emul(
+                _econst(scale),
+                _epow(
+                    _eadd(
+                        _scaled(theta_v, _epow(_evar(:VUSE, route), _econst(rho_metal))),
+                        _scaled(theta_r, _epow(_scaled(phi, _evar(:RUSE, route)), _econst(rho_metal)))),
+                    _econst(1.0 / rho_metal)))
         end
-        _register_constraint!(ctx, block, :metal_composite, constraint;
-            info = "MEFF[$(route)] <= calibrated CES(VUSE[$(route)], quality * RUSE[$(route)])",
+        expr = _ele(_evar(:MEFF, route), rhs)
+        _register_ast_equation!(ctx, block, :metal_composite, expr;
+            info = "effective metal input is limited by the calibrated virgin-recycled material composite",
             indices = (route,))
     end
 
-    constraint = JuMP.@constraint(model,
-        sum(virgin_use[route] for route in MATERIAL_ROUTES) <= z[:VMTL])
-    _register_constraint!(ctx, block, :virgin_material_balance, constraint;
-        info = "sum(VUSE[route]) <= Z[VMTL]")
+    if block.closure === :planner
+        expr = _ele(_sum_expr([_evar(:VUSE, route) for route in MATERIAL_ROUTES]), _evar(:Z, :VMTL))
+        _register_ast_equation!(ctx, block, :virgin_material_balance, expr;
+            info = "virgin material use is limited by virgin material output")
 
-    constraint = JuMP.@constraint(model,
-        sum(recycled_use[route] for route in MATERIAL_ROUTES) <= z[:RMTL])
-    _register_constraint!(ctx, block, :recycled_material_balance, constraint;
-        info = "sum(RUSE[route]) <= Z[RMTL]")
+        expr = _ele(_sum_expr([_evar(:RUSE, route) for route in MATERIAL_ROUTES]), _evar(:Z, :RMTL))
+        _register_ast_equation!(ctx, block, :recycled_material_balance, expr;
+            info = "recycled material use is limited by recycled material output")
+    elseif block.closure === :fiscal
+        expr = _eeq(_sum_expr([_evar(:VUSE, route) for route in MATERIAL_ROUTES]), _evar(:Z, :VMTL))
+        _register_ast_equation!(ctx, block, :virgin_material_balance, expr;
+            info = "virgin material use balances virgin material output")
 
-    rho_routes = (params.sigma_routes - 1.0) / params.sigma_routes
-    route_scale = bench.route_scale
-    if abs(rho_routes) < 1.0e-8
-        constraint = JuMP.@NLconstraint(model,
-            z[:TST] <=
-            route_scale *
-            z[:NEW]^bench.route_share[:NEW] *
-            z[:REF]^bench.route_share[:REF] *
-            z[:REP]^bench.route_share[:REP] *
-            z[:REU]^bench.route_share[:REU])
+        expr = _eeq(_sum_expr([_evar(:RUSE, route) for route in MATERIAL_ROUTES]), _evar(:Z, :RMTL))
+        _register_ast_equation!(ctx, block, :recycled_material_balance, expr;
+            info = "recycled material use balances recycled material output")
     else
-        constraint = JuMP.@NLconstraint(model,
-            z[:TST] <=
-            route_scale *
-            (sum(bench.route_share[route] * z[route]^rho_routes for route in ROUTES))^(1.0 / rho_routes))
+        error("Unsupported single-country closure $(block.closure)")
     end
-    _register_constraint!(ctx, block, :toaster_service_composite, constraint;
-        info = "Z[TST] <= calibrated CES(Z[NEW], Z[REF], Z[REP], Z[REU])")
-
-    if block.replicate_benchmark
-        for a in (PRODUCTION_ACTIVITIES..., :TST)
-            constraint = JuMP.@constraint(model, z[a] == bench.output[a])
-            _register_constraint!(ctx, block, :replicate_output, constraint;
-                info = "Z[$(a)] == benchmark output", indices = (a,))
-        end
-        for h in FACTORS, a in PRODUCTION_ACTIVITIES
-            constraint = JuMP.@constraint(model, factors[(h, a)] == bench.factor_input[(h, a)])
-            _register_constraint!(ctx, block, :replicate_factor_input, constraint;
-                info = "F[$(h),$(a)] == benchmark factor input", indices = (h, a))
-        end
-        for use in EOL_USES
-            constraint = JuMP.@constraint(model, eol[use] == bench.eol_allocation[use])
-            _register_constraint!(ctx, block, :replicate_eol, constraint;
-                info = "EOL[$(use)] == benchmark EOL allocation", indices = (use,))
-        end
-        for route in MATERIAL_ROUTES
-            constraint = JuMP.@constraint(model, virgin_use[route] == bench.material_input[(:VMTL, route)])
-            _register_constraint!(ctx, block, :replicate_virgin_use, constraint;
-                info = "VUSE[$(route)] == benchmark virgin-metal use", indices = (route,))
-            constraint = JuMP.@constraint(model, recycled_use[route] == bench.material_input[(:RMTL, route)])
-            _register_constraint!(ctx, block, :replicate_recycled_use, constraint;
-                info = "RUSE[$(route)] == benchmark recycled-metal use", indices = (route,))
-        end
-    end
-
-    alpha_brd = bench.utility_share[:BRD]
-    alpha_tst = bench.utility_share[:TST]
-    total_final_demand = bench.output[:BRD] + bench.output[:TST]
-    wedge_burden = (
-        sum(policy.route[route] * z[route] for route in ROUTES) +
-        policy.material[:VMTL] * sum(virgin_use[route] for route in MATERIAL_ROUTES) +
-        policy.material[:RMTL] * sum(recycled_use[route] for route in MATERIAL_ROUTES) +
-        sum(policy.eol[use] * eol[use] for use in EOL_USES)
-    ) / total_final_demand
-    JuMP.@NLobjective(model, Max,
-        alpha_brd * log(z[:BRD]) + alpha_tst * log(z[:TST]) - wedge_burden)
-    JCGERuntime.register_equation!(ctx;
-        tag = :objective,
-        block = block.name,
-        payload = (
-            indices = (),
-            params = block.params,
-            info = "maximize alpha_brd * log(Z[BRD]) + alpha_tst * log(Z[TST])",
-            expr = JCGECore.ERaw("log utility objective"),
-            constraint = nothing,
-        ))
 
     return nothing
 end
 
-function _bounded_unit_cost(cost::Real)
-    return max(1.0e-4, Float64(cost))
+function JCGECore.build!(block::SingleCountryBlock{:route_service},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    params = block.params
+    bench = block.benchmark
+    _require_single_model(ctx, block)
+
+    rho_routes = (params.sigma_routes - 1.0) / params.sigma_routes
+    route_scale = bench.route_scale
+    if abs(rho_routes) < 1.0e-8
+        rhs = _emul(
+            _econst(route_scale),
+            _prod_expr([
+                _epow(_evar(:Z, route), _econst(bench.route_share[route]))
+                for route in ROUTES
+            ]))
+    else
+        rhs = _emul(
+            _econst(route_scale),
+            _epow(
+                _sum_expr([
+                    _scaled(bench.route_share[route],
+                        _epow(_evar(:Z, route), _econst(rho_routes)))
+                    for route in ROUTES
+                ]),
+                _econst(1.0 / rho_routes)))
+    end
+    expr = _ele(_evar(:Z, :TST), rhs)
+    _register_ast_equation!(ctx, block, :toaster_service_composite, expr;
+        info = "toaster-service output is limited by the calibrated route composite")
+
+    return nothing
+end
+
+function JCGECore.build!(block::SingleCountryBlock{:replication},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    block.replicate_benchmark || return nothing
+
+    params = block.params
+    bench = block.benchmark
+    _require_single_model(ctx, block)
+    _ensure_single_outputs!(ctx, bench)
+    _ensure_single_factors!(ctx, bench)
+    _ensure_single_eol!(ctx, bench)
+    _ensure_single_material_inputs!(ctx, params, bench)
+
+    for a in (PRODUCTION_ACTIVITIES..., :TST)
+        expr = _eeq(_evar(:Z, a), _econst(bench.output[a]))
+        _register_ast_equation!(ctx, block, :replicate_output, expr;
+            info = "benchmark output replication", indices = (a,))
+    end
+    for h in FACTORS, a in PRODUCTION_ACTIVITIES
+        expr = _eeq(_evar(:F, h, a), _econst(bench.factor_input[(h, a)]))
+        _register_ast_equation!(ctx, block, :replicate_factor_input, expr;
+            info = "benchmark factor-input replication", indices = (h, a))
+    end
+    for use in EOL_USES
+        expr = _eeq(_evar(:EOL, use), _econst(bench.eol_allocation[use]))
+        _register_ast_equation!(ctx, block, :replicate_eol, expr;
+            info = "benchmark EOL allocation replication", indices = (use,))
+    end
+    for route in MATERIAL_ROUTES
+        expr = _eeq(_evar(:VUSE, route), _econst(bench.material_input[(:VMTL, route)]))
+        _register_ast_equation!(ctx, block, :replicate_virgin_use, expr;
+            info = "benchmark virgin-material-use replication", indices = (route,))
+        expr = _eeq(_evar(:RUSE, route), _econst(bench.material_input[(:RMTL, route)]))
+        _register_ast_equation!(ctx, block, :replicate_recycled_use, expr;
+            info = "benchmark recycled-material-use replication", indices = (route,))
+    end
+
+    return nothing
 end
 
 function _factor_unit_cost(bench, activity::Symbol)
@@ -296,34 +299,6 @@ end
 
 function _recycling_eol_coefficient(bench)
     return bench.eol_allocation[:REC] / bench.output[:RMTL]
-end
-
-function _eol_unit_cost(policy::PolicyWedges, use::Symbol)
-    return _bounded_unit_cost(1.0 + policy.eol[use])
-end
-
-function _eol_allocation_cost(policy::PolicyWedges, use::Symbol)
-    downstream =
-        if use in ROUTES
-            policy.route[use]
-        elseif use === :REC
-            policy.material[:RMTL]
-        else
-            0.0
-        end
-    return _bounded_unit_cost(1.0 + policy.eol[use] + downstream)
-end
-
-function _eol_allocation_shares(params, bench, policy::PolicyWedges)
-    base_total = sum(values(bench.eol_allocation))
-    raw = Dict{Symbol,Float64}()
-    for use in EOL_USES
-        base_share = bench.eol_allocation[use] / base_total
-        raw[use] = base_share * _eol_allocation_cost(policy, use)^(-params.sigma_eol)
-    end
-    total = sum(values(raw))
-    total > 0.0 || error("EOL allocation shares are undefined because all raw shares are zero")
-    return Dict(use => raw[use] / total for use in EOL_USES)
 end
 
 function _material_unit_cost(params, bench, policy::PolicyWedges, material::Symbol)
@@ -352,390 +327,273 @@ function _pre_fiscal_income(params, bench)
     return sum(values(bench.factor_endowment)) + params.delta * bench.stock0
 end
 
-function _policy_net_expression(policy::PolicyWedges, z, eol, virgin_use, recycled_use)
-    return (
-        sum(policy.route[route] * z[route] for route in ROUTES) +
-        policy.material[:VMTL] * sum(virgin_use[route] for route in MATERIAL_ROUTES) +
-        policy.material[:RMTL] * sum(recycled_use[route] for route in MATERIAL_ROUTES) +
-        sum(policy.eol[use] * eol[use] for use in EOL_USES)
-    )
-end
-
-function _policy_revenue_expression(policy::PolicyWedges, z, eol, virgin_use, recycled_use)
-    return (
-        sum(max(policy.route[route], 0.0) * z[route] for route in ROUTES) +
-        max(policy.material[:VMTL], 0.0) * sum(virgin_use[route] for route in MATERIAL_ROUTES) +
-        max(policy.material[:RMTL], 0.0) * sum(recycled_use[route] for route in MATERIAL_ROUTES) +
-        sum(max(policy.eol[use], 0.0) * eol[use] for use in EOL_USES)
-    )
-end
-
-function _policy_subsidy_expression(policy::PolicyWedges, z, eol, virgin_use, recycled_use)
-    return (
-        sum(-min(policy.route[route], 0.0) * z[route] for route in ROUTES) +
-        -min(policy.material[:VMTL], 0.0) * sum(virgin_use[route] for route in MATERIAL_ROUTES) +
-        -min(policy.material[:RMTL], 0.0) * sum(recycled_use[route] for route in MATERIAL_ROUTES) +
-        sum(-min(policy.eol[use], 0.0) * eol[use] for use in EOL_USES)
-    )
-end
-
-function JCGECore.build!(block::CircularFiscalOnePeriodBlock,
+function JCGECore.build!(block::SingleCountryBlock{:price},
     ctx::JCGERuntime.KernelContext,
     spec::JCGECore.RunSpec)
+    block.closure === :fiscal ||
+        error("Price block is only defined for the fiscal single-country closure")
+
     params = block.params
     bench = block.benchmark
     policy = block.policy
-    model = ctx.model
-    model isa JuMP.Model || error("CircularFiscalOnePeriodBlock requires a JuMP-backed JCGE runtime context")
-    _register_metadata!(ctx, block)
+    _require_single_model(ctx, block)
+    _ensure_single_price_vars!(ctx, params, bench, policy)
 
-    z = Dict{Symbol,Any}()
-    for a in (PRODUCTION_ACTIVITIES..., :TST)
-        z[a] = _ensure_var!(ctx, _global_var(:Z, a); start = bench.output[a])
-    end
+    expr = _eeq(_evar(:P_BRD), _econst(1.0))
+    _register_ast_equation!(ctx, block, :numeraire, expr;
+        info = "bread price numeraire")
 
-    factors = Dict{Tuple{Symbol,Symbol},Any}()
-    for h in FACTORS, a in PRODUCTION_ACTIVITIES
-        factors[(h, a)] = _ensure_var!(ctx, _global_var(:F, h, a);
-            start = bench.factor_input[(h, a)])
-    end
-
-    eol = Dict{Symbol,Any}()
-    ret = params.delta * bench.stock0
-    for use in EOL_USES
-        eol[use] = _ensure_var!(ctx, _global_var(:EOL, use);
-            lower = 0.0, start = bench.eol_allocation[use])
-    end
-
-    metal_eff = Dict{Symbol,Any}()
-    virgin_use = Dict{Symbol,Any}()
-    recycled_use = Dict{Symbol,Any}()
-    for route in MATERIAL_ROUTES
-        metal_eff[route] = _ensure_var!(ctx, _global_var(:MEFF, route);
-            start = _metal_intensity(params, route) * bench.output[route])
-        virgin_use[route] = _ensure_var!(ctx, _global_var(:VUSE, route);
-            start = bench.material_input[(:VMTL, route)])
-        recycled_use[route] = _ensure_var!(ctx, _global_var(:RUSE, route);
-            start = bench.material_input[(:RMTL, route)])
-    end
-
-    for a in PRODUCTION_ACTIVITIES
-        lab = factors[(:LAB, a)]
-        cap = factors[(:CAP, a)]
-        beta_lab = bench.factor_share[(:LAB, a)]
-        beta_cap = bench.factor_share[(:CAP, a)]
-        scale = bench.productivity[a]
-        constraint = JuMP.@NLconstraint(model, z[a] <= scale * lab^beta_lab * cap^beta_cap)
-        _register_constraint!(ctx, block, :technology, constraint;
-            info = "Z[$(a)] <= A[$(a)] * F[LAB,$(a)]^beta * F[CAP,$(a)]^(1-beta)",
-            indices = (a,))
-    end
-
-    for h in FACTORS
-        constraint = JuMP.@constraint(model,
-            sum(factors[(h, a)] for a in PRODUCTION_ACTIVITIES) <= bench.factor_endowment[h])
-        _register_constraint!(ctx, block, :factor_endowment, constraint;
-            info = "sum(F[$(h),a]) <= FF[$(h)]",
-            indices = (h,))
-    end
-
-    eol_shares = _eol_allocation_shares(params, bench, policy)
-    for use in EOL_USES
-        constraint = JuMP.@constraint(model, eol[use] == eol_shares[use] * ret)
-        _register_constraint!(ctx, block, :eol_allocation, constraint;
-            info = "EOL[$(use)] follows calibrated allocation shares from policy-adjusted EOL costs",
-            indices = (use,))
-    end
-
-    for route in (:REF, :REP, :REU)
-        y = _route_yield(params, route)
-        constraint = JuMP.@constraint(model, z[route] <= y * eol[route])
-        _register_constraint!(ctx, block, :route_yield, constraint;
-            info = "Z[$(route)] <= yield[$(route)] * EOL[$(route)]",
-            indices = (route,))
-    end
-
-    constraint = JuMP.@constraint(model, z[:RMTL] <= params.yield.rmtl * eol[:REC])
-    _register_constraint!(ctx, block, :recycling_yield, constraint;
-        info = "Z[RMTL] <= yield[RMTL] * EOL[REC]")
-
-    for route in MATERIAL_ROUTES
-        alpha = _metal_intensity(params, route)
-        constraint = JuMP.@constraint(model, alpha * z[route] <= metal_eff[route])
-        _register_constraint!(ctx, block, :route_material_requirement, constraint;
-            info = "metal_intensity[$(route)] * Z[$(route)] <= MEFF[$(route)]",
-            indices = (route,))
-    end
-
-    rho_metal = (params.sigma_metal - 1.0) / params.sigma_metal
-    phi = params.metal_quality
-    for route in MATERIAL_ROUTES
-        theta_v = bench.route_metal_share[(:VMTL, route)]
-        theta_r = bench.route_metal_share[(:RMTL, route)]
-        scale = bench.metal_scale[route]
-        if abs(rho_metal) < 1.0e-8
-            constraint = JuMP.@NLconstraint(model,
-                metal_eff[route] <= scale * virgin_use[route]^theta_v * (phi * recycled_use[route])^theta_r)
-        else
-            constraint = JuMP.@NLconstraint(model,
-                metal_eff[route] <=
-                scale *
-                (theta_v * virgin_use[route]^rho_metal +
-                 theta_r * (phi * recycled_use[route])^rho_metal)^(1.0 / rho_metal))
-        end
-        _register_constraint!(ctx, block, :metal_composite, constraint;
-            info = "MEFF[$(route)] <= calibrated CES(VUSE[$(route)], quality * RUSE[$(route)])",
-            indices = (route,))
-    end
-
-    constraint = JuMP.@constraint(model,
-        sum(virgin_use[route] for route in MATERIAL_ROUTES) == z[:VMTL])
-    _register_constraint!(ctx, block, :virgin_material_balance, constraint;
-        info = "sum(VUSE[route]) == Z[VMTL]")
-
-    constraint = JuMP.@constraint(model,
-        sum(recycled_use[route] for route in MATERIAL_ROUTES) == z[:RMTL])
-    _register_constraint!(ctx, block, :recycled_material_balance, constraint;
-        info = "sum(RUSE[route]) == Z[RMTL]")
-
-    rho_routes = (params.sigma_routes - 1.0) / params.sigma_routes
-    route_scale = bench.route_scale
-    if abs(rho_routes) < 1.0e-8
-        constraint = JuMP.@NLconstraint(model,
-            z[:TST] <=
-            route_scale *
-            z[:NEW]^bench.route_share[:NEW] *
-            z[:REF]^bench.route_share[:REF] *
-            z[:REP]^bench.route_share[:REP] *
-            z[:REU]^bench.route_share[:REU])
-    else
-        constraint = JuMP.@NLconstraint(model,
-            z[:TST] <=
-            route_scale *
-            (sum(bench.route_share[route] * z[route]^rho_routes for route in ROUTES))^(1.0 / rho_routes))
-    end
-    _register_constraint!(ctx, block, :toaster_service_composite, constraint;
-        info = "Z[TST] <= calibrated CES(Z[NEW], Z[REF], Z[REP], Z[REU])")
-
-    if block.replicate_benchmark
-        for a in (PRODUCTION_ACTIVITIES..., :TST)
-            constraint = JuMP.@constraint(model, z[a] == bench.output[a])
-            _register_constraint!(ctx, block, :replicate_output, constraint;
-                info = "Z[$(a)] == benchmark output", indices = (a,))
-        end
-        for h in FACTORS, a in PRODUCTION_ACTIVITIES
-            constraint = JuMP.@constraint(model, factors[(h, a)] == bench.factor_input[(h, a)])
-            _register_constraint!(ctx, block, :replicate_factor_input, constraint;
-                info = "F[$(h),$(a)] == benchmark factor input", indices = (h, a))
-        end
-        for use in EOL_USES
-            constraint = JuMP.@constraint(model, eol[use] == bench.eol_allocation[use])
-            _register_constraint!(ctx, block, :replicate_eol, constraint;
-                info = "EOL[$(use)] == benchmark EOL allocation", indices = (use,))
-        end
-        for route in MATERIAL_ROUTES
-            constraint = JuMP.@constraint(model, virgin_use[route] == bench.material_input[(:VMTL, route)])
-            _register_constraint!(ctx, block, :replicate_virgin_use, constraint;
-                info = "VUSE[$(route)] == benchmark virgin-metal use", indices = (route,))
-            constraint = JuMP.@constraint(model, recycled_use[route] == bench.material_input[(:RMTL, route)])
-            _register_constraint!(ctx, block, :replicate_recycled_use, constraint;
-                info = "RUSE[$(route)] == benchmark recycled-metal use", indices = (route,))
-        end
-    end
-
-    p_brd = _ensure_var!(ctx, :P_BRD; start = 1.0)
-    constraint = JuMP.@constraint(model, p_brd == 1.0)
-    _register_constraint!(ctx, block, :numeraire, constraint;
-        info = "P[BRD] == 1")
-
-    p_eol = Dict{Symbol,Any}()
     for use in EOL_USES
         unit_cost = _eol_unit_cost(policy, use)
-        p_eol[use] = _ensure_var!(ctx, _global_var(:P_EOL, use); start = unit_cost)
-        constraint = JuMP.@constraint(model, p_eol[use] == unit_cost)
-        _register_constraint!(ctx, block, :eol_price, constraint;
-            info = "P_EOL[$(use)] equals the tax-inclusive EOL use cost",
+        expr = _eeq(_evar(:P_EOL, use), _econst(unit_cost))
+        _register_ast_equation!(ctx, block, :eol_price, expr;
+            info = "EOL use price is set from policy-adjusted unit cost",
             indices = (use,))
     end
 
-    p_material = Dict{Symbol,Any}()
-    for material in MATERIALS
-        unit_cost = _material_unit_cost(params, bench, policy, material)
-        p_material[material] = _ensure_var!(ctx, _global_var(:P_MAT, material); start = unit_cost)
-    end
-    constraint = JuMP.@constraint(model,
-        p_material[:VMTL] >= _factor_unit_cost(bench, :VMTL) + policy.material[:VMTL])
-    _register_constraint!(ctx, block, :material_price, constraint;
-        info = "P_MAT[VMTL] is bounded below by virgin-material factor cost plus material wedge",
+    expr = _ege(_evar(:P_MAT, :VMTL),
+        _econst(_factor_unit_cost(bench, :VMTL) + policy.material[:VMTL]))
+    _register_ast_equation!(ctx, block, :material_price, expr;
+        info = "virgin material price covers factor cost and material policy wedge",
         indices = (:VMTL,))
-    constraint = JuMP.@constraint(model,
-        p_material[:RMTL] >=
-        _factor_unit_cost(bench, :RMTL) +
-        _recycling_eol_coefficient(bench) * p_eol[:REC] +
-        policy.material[:RMTL])
-    _register_constraint!(ctx, block, :material_price, constraint;
-        info = "P_MAT[RMTL] is bounded below by recycling factor cost plus EOL input cost plus material wedge",
+    expr = _ege(_evar(:P_MAT, :RMTL),
+        _eadd(
+            _econst(_factor_unit_cost(bench, :RMTL) + policy.material[:RMTL]),
+            _scaled(_recycling_eol_coefficient(bench), _evar(:P_EOL, :REC))))
+    _register_ast_equation!(ctx, block, :material_price, expr;
+        info = "recycled material price covers factor cost, EOL input cost, and material policy wedge",
         indices = (:RMTL,))
 
-    p_eff = Dict{Symbol,Any}()
     for route in MATERIAL_ROUTES
-        p_eff[route] = _ensure_var!(ctx, _global_var(:P_MEFF, route); start = 1.0)
         theta_v = bench.route_metal_share[(:VMTL, route)]
         theta_r = bench.route_metal_share[(:RMTL, route)]
         if abs(params.sigma_metal - 1.0) < 1.0e-8
-            constraint = JuMP.@NLconstraint(model,
-                p_eff[route] == p_material[:VMTL]^theta_v * p_material[:RMTL]^theta_r)
+            expr = _eeq(_evar(:P_MEFF, route),
+                _emul(
+                    _epow(_evar(:P_MAT, :VMTL), _econst(theta_v)),
+                    _epow(_evar(:P_MAT, :RMTL), _econst(theta_r))))
         else
-            constraint = JuMP.@NLconstraint(model,
-                p_eff[route] ==
-                (theta_v * p_material[:VMTL]^(1.0 - params.sigma_metal) +
-                 theta_r * p_material[:RMTL]^(1.0 - params.sigma_metal))^
-                (1.0 / (1.0 - params.sigma_metal)))
+            expr = _eeq(_evar(:P_MEFF, route),
+                _epow(
+                    _eadd(
+                        _scaled(theta_v,
+                            _epow(_evar(:P_MAT, :VMTL), _econst(1.0 - params.sigma_metal))),
+                        _scaled(theta_r,
+                            _epow(_evar(:P_MAT, :RMTL), _econst(1.0 - params.sigma_metal)))),
+                    _econst(1.0 / (1.0 - params.sigma_metal))))
         end
-        _register_constraint!(ctx, block, :metal_price_index, constraint;
-            info = "P_MEFF[$(route)] is a CES material price index",
+        _register_ast_equation!(ctx, block, :metal_price_index, expr;
+            info = "effective metal price is the calibrated CES material price index",
             indices = (route,))
     end
 
-    p_route = Dict{Symbol,Any}()
-    for route in ROUTES
-        unit_cost = _route_unit_cost(params, bench, policy, route)
-        p_route[route] = _ensure_var!(ctx, _global_var(:P_ROUTE, route); start = unit_cost)
-    end
-    constraint = JuMP.@constraint(model,
-        p_route[:NEW] >=
-        _factor_unit_cost(bench, :NEW) +
-        _metal_intensity(params, :NEW) * p_eff[:NEW] +
-        policy.route[:NEW])
-    _register_constraint!(ctx, block, :route_price, constraint;
-        info = "P_ROUTE[NEW] is bounded below by factor cost plus metal-composite cost plus route wedge",
+    expr = _ege(_evar(:P_ROUTE, :NEW),
+        _eadd(
+            _econst(_factor_unit_cost(bench, :NEW) + policy.route[:NEW]),
+            _scaled(_metal_intensity(params, :NEW), _evar(:P_MEFF, :NEW))))
+    _register_ast_equation!(ctx, block, :route_price, expr;
+        info = "new route price covers factor cost, metal-composite cost, and route wedge",
         indices = (:NEW,))
     for route in (:REF, :REP)
-        constraint = JuMP.@constraint(model,
-            p_route[route] >=
-            _factor_unit_cost(bench, route) +
-            _metal_intensity(params, route) * p_eff[route] +
-            _route_eol_coefficient(bench, route) * p_eol[route] +
-            policy.route[route])
-        _register_constraint!(ctx, block, :route_price, constraint;
-            info = "P_ROUTE[$(route)] is bounded below by factor, metal, EOL input, and route-wedge costs",
+        expr = _ege(_evar(:P_ROUTE, route),
+            _eadd(
+                _econst(_factor_unit_cost(bench, route) + policy.route[route]),
+                _scaled(_metal_intensity(params, route), _evar(:P_MEFF, route)),
+                _scaled(_route_eol_coefficient(bench, route), _evar(:P_EOL, route))))
+        _register_ast_equation!(ctx, block, :route_price, expr;
+            info = "circular material-using route price covers factor, metal, EOL input, and route-wedge costs",
             indices = (route,))
     end
-    constraint = JuMP.@constraint(model,
-        p_route[:REU] >=
-        _factor_unit_cost(bench, :REU) +
-        _route_eol_coefficient(bench, :REU) * p_eol[:REU] +
-        policy.route[:REU])
-    _register_constraint!(ctx, block, :route_price, constraint;
-        info = "P_ROUTE[REU] is bounded below by factor, EOL input, and route-wedge costs",
+    expr = _ege(_evar(:P_ROUTE, :REU),
+        _eadd(
+            _econst(_factor_unit_cost(bench, :REU) + policy.route[:REU]),
+            _scaled(_route_eol_coefficient(bench, :REU), _evar(:P_EOL, :REU))))
+    _register_ast_equation!(ctx, block, :route_price, expr;
+        info = "reuse route price covers factor, EOL input, and route-wedge costs",
         indices = (:REU,))
 
-    p_tst = _ensure_var!(ctx, :P_TST; start = 1.0)
     if abs(params.sigma_routes - 1.0) < 1.0e-8
-        constraint = JuMP.@NLconstraint(model,
-            p_tst ==
-            p_route[:NEW]^bench.route_share[:NEW] *
-            p_route[:REF]^bench.route_share[:REF] *
-            p_route[:REP]^bench.route_share[:REP] *
-            p_route[:REU]^bench.route_share[:REU])
+        expr = _eeq(_evar(:P_TST),
+            _prod_expr([
+                _epow(_evar(:P_ROUTE, route), _econst(bench.route_share[route]))
+                for route in ROUTES
+            ]))
     else
-        constraint = JuMP.@NLconstraint(model,
-            p_tst ==
-            (sum(bench.route_share[route] * p_route[route]^(1.0 - params.sigma_routes)
-                 for route in ROUTES))^(1.0 / (1.0 - params.sigma_routes)))
+        expr = _eeq(_evar(:P_TST),
+            _epow(
+                _sum_expr([
+                    _scaled(bench.route_share[route],
+                        _epow(_evar(:P_ROUTE, route), _econst(1.0 - params.sigma_routes)))
+                    for route in ROUTES
+                ]),
+                _econst(1.0 / (1.0 - params.sigma_routes))))
     end
-    _register_constraint!(ctx, block, :toaster_service_price, constraint;
-        info = "P[TST] is a CES route price index")
+    _register_ast_equation!(ctx, block, :toaster_service_price, expr;
+        info = "toaster-service price is the calibrated CES route price index")
 
-    y_prefiscal = _ensure_var!(ctx, :Y_PREFISCAL; start = _pre_fiscal_income(params, bench))
-    y_hoh = _ensure_var!(ctx, :Y_HOH; start = _pre_fiscal_income(params, bench))
-    gov_net = _ensure_var!(ctx, :GOV_NET; lower = nothing, start = 0.0)
-    gov_revenue = _ensure_var!(ctx, :GOV_REVENUE; lower = 0.0, start = 0.0)
-    gov_subsidy = _ensure_var!(ctx, :GOV_SUBSIDY; lower = 0.0, start = 0.0)
-    gov_transfer = _ensure_var!(ctx, :GOV_TRANSFER; lower = nothing, start = 0.0)
+    return nothing
+end
 
-    net_expr = _policy_net_expression(policy, z, eol, virgin_use, recycled_use)
-    revenue_expr = _policy_revenue_expression(policy, z, eol, virgin_use, recycled_use)
-    subsidy_expr = _policy_subsidy_expression(policy, z, eol, virgin_use, recycled_use)
+function JCGECore.build!(block::SingleCountryBlock{:fiscal_income},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    block.closure === :fiscal ||
+        error("Fiscal-income block is only defined for the fiscal single-country closure")
 
-    constraint = JuMP.@constraint(model, y_prefiscal == _pre_fiscal_income(params, bench))
-    _register_constraint!(ctx, block, :prefiscal_income, constraint;
-        info = "Y_PREFISCAL equals factor plus EOL endowment income")
+    params = block.params
+    bench = block.benchmark
+    policy = block.policy
+    _require_single_model(ctx, block)
+    _ensure_single_fiscal_vars!(ctx, params, bench)
 
-    constraint = JuMP.@constraint(model, gov_net == net_expr)
-    _register_constraint!(ctx, block, :government_net_revenue, constraint;
-        info = "GOV_NET equals tax revenue net of subsidy outlays")
+    route_var = route -> _evar(:Z, route)
+    virgin_var = route -> _evar(:VUSE, route)
+    recycled_var = route -> _evar(:RUSE, route)
+    eol_var = use -> _evar(:EOL, use)
 
-    constraint = JuMP.@constraint(model, gov_revenue == revenue_expr)
-    _register_constraint!(ctx, block, :government_revenue, constraint;
-        info = "GOV_REVENUE equals positive policy wedge receipts")
+    expr = _eeq(_evar(:Y_PREFISCAL), _econst(_pre_fiscal_income(params, bench)))
+    _register_ast_equation!(ctx, block, :prefiscal_income, expr;
+        info = "prefiscal income records factor and EOL endowment income")
 
-    constraint = JuMP.@constraint(model, gov_subsidy == subsidy_expr)
-    _register_constraint!(ctx, block, :government_subsidy, constraint;
-        info = "GOV_SUBSIDY equals negative policy wedge outlays")
+    expr = _eeq(_evar(:GOV_NET),
+        _policy_net_ast(policy;
+            route_var = route_var,
+            virgin_var = virgin_var,
+            recycled_var = recycled_var,
+            eol_var = eol_var))
+    _register_ast_equation!(ctx, block, :government_net_revenue, expr;
+        info = "net government revenue records tax revenue net of subsidy outlays")
 
-    constraint = JuMP.@constraint(model, gov_transfer == gov_net)
-    _register_constraint!(ctx, block, :government_transfer, constraint;
-        info = "GOV_TRANSFER rebates net revenue to households; negative values are lump-sum financing")
+    expr = _eeq(_evar(:GOV_REVENUE),
+        _policy_revenue_ast(policy;
+            route_var = route_var,
+            virgin_var = virgin_var,
+            recycled_var = recycled_var,
+            eol_var = eol_var))
+    _register_ast_equation!(ctx, block, :government_revenue, expr;
+        info = "gross government revenue records positive policy wedge receipts")
 
-    constraint = JuMP.@constraint(model, y_hoh == y_prefiscal + gov_transfer)
-    _register_constraint!(ctx, block, :household_income, constraint;
-        info = "Y_HOH equals prefiscal income plus net government transfer")
+    expr = _eeq(_evar(:GOV_SUBSIDY),
+        _policy_subsidy_ast(policy;
+            route_var = route_var,
+            virgin_var = virgin_var,
+            recycled_var = recycled_var,
+            eol_var = eol_var))
+    _register_ast_equation!(ctx, block, :government_subsidy, expr;
+        info = "gross government subsidy records negative policy wedge outlays")
 
-    alpha_brd = bench.utility_share[:BRD]
-    alpha_tst = bench.utility_share[:TST]
+    expr = _eeq(_evar(:GOV_TRANSFER), _evar(:GOV_NET))
+    _register_ast_equation!(ctx, block, :government_transfer, expr;
+        info = "net government revenue is rebated to households; negative values are lump-sum financing")
+
+    expr = _eeq(_evar(:Y_HOH), _eadd(_evar(:Y_PREFISCAL), _evar(:GOV_TRANSFER)))
+    _register_ast_equation!(ctx, block, :household_income, expr;
+        info = "household income includes prefiscal income and net government transfer")
+
+    return nothing
+end
+
+function JCGECore.build!(block::SingleCountryBlock{:demand},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    block.closure === :fiscal ||
+        error("Demand block is only defined for the fiscal single-country closure")
+
+    params = block.params
+    bench = block.benchmark
+    _require_single_model(ctx, block)
+
     y0 = _pre_fiscal_income(params, bench)
-    constraint = JuMP.@NLconstraint(model,
-        z[:TST] == bench.output[:TST] * (y_hoh / y0) * p_tst^(-params.eta_service))
-    _register_constraint!(ctx, block, :household_toaster_demand, constraint;
-        info = "Z[TST] follows an isoelastic service-demand curve with income scaling")
+    expr = _eeq(_evar(:Z, :TST),
+        _emul(
+            _econst(bench.output[:TST]),
+            _ediv(_evar(:Y_HOH), _econst(y0)),
+            _epow(_evar(:P_TST), _econst(-params.eta_service))))
+    _register_ast_equation!(ctx, block, :household_toaster_demand, expr;
+        info = "toaster-service demand follows an income-scaled isoelastic demand curve")
 
-    constraint = JuMP.@NLconstraint(model, z[:BRD] == (y_hoh - p_tst * z[:TST]) / p_brd)
-    _register_constraint!(ctx, block, :household_bread_demand, constraint;
-        info = "Z[BRD] absorbs residual household income after toaster-service expenditure")
+    expr = _eeq(_evar(:Z, :BRD),
+        _ediv(
+            _eadd(_evar(:Y_HOH), _eneg(_emul(_evar(:P_TST), _evar(:Z, :TST)))),
+            _evar(:P_BRD)))
+    _register_ast_equation!(ctx, block, :household_bread_demand, expr;
+        info = "bread demand absorbs residual household income after toaster-service expenditure")
 
     for route in ROUTES
-        constraint = JuMP.@NLconstraint(model,
-            z[route] ==
-            bench.route_share[route] * z[:TST] * (p_tst / p_route[route])^params.sigma_routes)
-        _register_constraint!(ctx, block, :route_demand, constraint;
-            info = "Z[$(route)] follows CES demand from the tax-inclusive route price",
+        expr = _eeq(_evar(:Z, route),
+            _emul(
+                _econst(bench.route_share[route]),
+                _evar(:Z, :TST),
+                _epow(_ediv(_evar(:P_TST), _evar(:P_ROUTE, route)),
+                    _econst(params.sigma_routes))))
+        _register_ast_equation!(ctx, block, :route_demand, expr;
+            info = "route demand follows calibrated CES route substitution",
             indices = (route,))
     end
 
     for route in MATERIAL_ROUTES
         base_eff = _metal_intensity(params, route) * bench.output[route]
-        constraint = JuMP.@NLconstraint(model,
-            virgin_use[route] ==
-            bench.material_input[(:VMTL, route)] *
-            (metal_eff[route] / base_eff) *
-            (p_eff[route] / p_material[:VMTL])^params.sigma_metal)
-        _register_constraint!(ctx, block, :virgin_material_demand, constraint;
-            info = "VUSE[$(route)] follows CES demand from the tax-inclusive virgin material price",
+        expr = _eeq(_evar(:VUSE, route),
+            _emul(
+                _econst(bench.material_input[(:VMTL, route)]),
+                _ediv(_evar(:MEFF, route), _econst(base_eff)),
+                _epow(_ediv(_evar(:P_MEFF, route), _evar(:P_MAT, :VMTL)),
+                    _econst(params.sigma_metal))))
+        _register_ast_equation!(ctx, block, :virgin_material_demand, expr;
+            info = "virgin material demand follows calibrated CES material substitution",
             indices = (route,))
 
-        constraint = JuMP.@NLconstraint(model,
-            recycled_use[route] ==
-            bench.material_input[(:RMTL, route)] *
-            (metal_eff[route] / base_eff) *
-            (p_eff[route] / p_material[:RMTL])^params.sigma_metal)
-        _register_constraint!(ctx, block, :recycled_material_demand, constraint;
-            info = "RUSE[$(route)] follows CES demand from the tax-inclusive recycled material price",
+        expr = _eeq(_evar(:RUSE, route),
+            _emul(
+                _econst(bench.material_input[(:RMTL, route)]),
+                _ediv(_evar(:MEFF, route), _econst(base_eff)),
+                _epow(_ediv(_evar(:P_MEFF, route), _evar(:P_MAT, :RMTL)),
+                    _econst(params.sigma_metal))))
+        _register_ast_equation!(ctx, block, :recycled_material_demand, expr;
+            info = "recycled material demand follows calibrated CES material substitution",
             indices = (route,))
     end
 
-    JuMP.@NLobjective(model, Max,
-        alpha_brd * log(z[:BRD]) + alpha_tst * log(z[:TST]))
-    JCGERuntime.register_equation!(ctx;
-        tag = :objective,
-        block = block.name,
-        payload = (
-            indices = (),
-            params = block.params,
-            info = "maximize household log utility under fiscal closure",
-            expr = JCGECore.ERaw("log utility objective with fiscal closure"),
-            constraint = nothing,
-        ))
+    return nothing
+end
+
+function JCGECore.build!(block::SingleCountryBlock{:objective},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    bench = block.benchmark
+    _require_single_model(ctx, block)
+
+    alpha_brd = bench.utility_share[:BRD]
+    alpha_tst = bench.utility_share[:TST]
+
+    if block.closure === :planner
+        policy = block.policy
+        total_final_demand = bench.output[:BRD] + bench.output[:TST]
+        route_var = route -> _evar(:Z, route)
+        virgin_var = route -> _evar(:VUSE, route)
+        recycled_var = route -> _evar(:RUSE, route)
+        eol_var = use -> _evar(:EOL, use)
+        expr = _eadd(
+            _scaled(alpha_brd, _elog(_evar(:Z, :BRD))),
+            _scaled(alpha_tst, _elog(_evar(:Z, :TST))),
+            _eneg(_ediv(
+                _policy_net_ast(policy;
+                    route_var = route_var,
+                    virgin_var = virgin_var,
+                    recycled_var = recycled_var,
+                    eol_var = eol_var),
+                _econst(total_final_demand))))
+        _register_ast_objective!(ctx, block, expr;
+            info = "planner utility objective")
+    elseif block.closure === :fiscal
+        expr = _eadd(
+            _scaled(alpha_brd, _elog(_evar(:Z, :BRD))),
+            _scaled(alpha_tst, _elog(_evar(:Z, :TST))))
+        _register_ast_objective!(ctx, block, expr;
+            info = "household utility objective under fiscal closure")
+    else
+        error("Unsupported single-country closure $(block.closure)")
+    end
 
     return nothing
 end
@@ -757,11 +615,16 @@ function model(; params = default_parameters(),
     institutions = collect(Symbol, INSTITUTIONS)
     sets = JCGECore.Sets(commodities, activities, factors, institutions)
     mappings = JCGECore.Mappings(Dict(a => a for a in activities))
-    block = CircularOnePeriodBlock(:circular_one_period, params, benchmark, replicate_benchmark, policy)
+    blocks = _single_country_blocks(;
+        params = params,
+        benchmark = benchmark,
+        replicate_benchmark = replicate_benchmark,
+        policy = policy,
+        closure = :planner)
 
     allowed = JCGECore.allowed_sections()
     section_blocks = Dict(sym => Any[] for sym in allowed)
-    push!(section_blocks[:production], block)
+    append!(section_blocks[:production], blocks)
     sections = [JCGECore.section(sym, section_blocks[sym]) for sym in allowed]
 
     return JCGECore.build_spec(
@@ -801,12 +664,16 @@ function fiscal_model(; params = default_parameters(),
     institutions = collect(Symbol, INSTITUTIONS)
     sets = JCGECore.Sets(commodities, activities, factors, institutions)
     mappings = JCGECore.Mappings(Dict(a => a for a in activities))
-    block = CircularFiscalOnePeriodBlock(:circular_fiscal_one_period,
-        params, benchmark, replicate_benchmark, policy)
+    blocks = _single_country_blocks(;
+        params = params,
+        benchmark = benchmark,
+        replicate_benchmark = replicate_benchmark,
+        policy = policy,
+        closure = :fiscal)
 
     allowed = JCGECore.allowed_sections()
     section_blocks = Dict(sym => Any[] for sym in allowed)
-    push!(section_blocks[:production], block)
+    append!(section_blocks[:production], blocks)
     sections = [JCGECore.section(sym, section_blocks[sym]) for sym in allowed]
 
     return JCGECore.build_spec(
@@ -853,7 +720,9 @@ end
 
 function _run_metadata(result)
     for eq in result.context.equations
-        if eq.tag == :metadata && eq.block in (:circular_one_period, :circular_fiscal_one_period)
+        if eq.tag == :metadata &&
+           haskey(eq.payload, :closure) &&
+           eq.payload.closure in (:planner, :fiscal)
             return eq.payload
         end
     end

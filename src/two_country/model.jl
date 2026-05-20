@@ -1,12 +1,6 @@
-struct CircularTwoCountryFiscalOnePeriodBlock <: JCGECore.AbstractBlock
-    name::Symbol
-    params::NamedTuple
-    benchmark::NamedTuple
-    replicate_benchmark::Bool
-    policy::PolicyWedges
-end
-
-_closure_kind(::CircularTwoCountryFiscalOnePeriodBlock) = :two_country_fiscal
+"""
+Build methods and model assembly for the two-country circular CGE blocks.
+"""
 
 function _two_country_factor_unit_cost(bench, activity::Symbol)
     local_factors = _two_country_activity_factors(activity)
@@ -46,125 +40,168 @@ function _two_country_route_unit_cost(params, bench, policy::PolicyWedges, route
     return _bounded_unit_cost(cost)
 end
 
-function _two_country_policy_net_expression(policy::PolicyWedges, z, eol, virgin_use, recycled_use)
-    return (
-        sum(policy.route[route] * z[_two_country_route_activity(route)] for route in ROUTES) +
-        policy.material[:VMTL] * sum(virgin_use[route] for route in MATERIAL_ROUTES) +
-        policy.material[:RMTL] * sum(recycled_use[route] for route in MATERIAL_ROUTES) +
-        sum(policy.eol[use] * eol[use] for use in EOL_USES)
-    )
+function _require_two_country_model(ctx::JCGERuntime.KernelContext, block)
+    ctx.model isa JuMP.Model ||
+        error("$(typeof(block)) requires a JuMP-backed JCGE runtime context")
+    return nothing
 end
 
-function _two_country_policy_revenue_expression(policy::PolicyWedges, z, eol, virgin_use, recycled_use)
-    return (
-        sum(max(policy.route[route], 0.0) * z[_two_country_route_activity(route)] for route in ROUTES) +
-        max(policy.material[:VMTL], 0.0) * sum(virgin_use[route] for route in MATERIAL_ROUTES) +
-        max(policy.material[:RMTL], 0.0) * sum(recycled_use[route] for route in MATERIAL_ROUTES) +
-        sum(max(policy.eol[use], 0.0) * eol[use] for use in EOL_USES)
-    )
-end
-
-function _two_country_policy_subsidy_expression(policy::PolicyWedges, z, eol, virgin_use, recycled_use)
-    return (
-        sum(-min(policy.route[route], 0.0) * z[_two_country_route_activity(route)]
-            for route in ROUTES) +
-        -min(policy.material[:VMTL], 0.0) * sum(virgin_use[route] for route in MATERIAL_ROUTES) +
-        -min(policy.material[:RMTL], 0.0) * sum(recycled_use[route] for route in MATERIAL_ROUTES) +
-        sum(-min(policy.eol[use], 0.0) * eol[use] for use in EOL_USES)
-    )
-end
-
-function JCGECore.build!(block::CircularTwoCountryFiscalOnePeriodBlock,
-    ctx::JCGERuntime.KernelContext,
-    spec::JCGECore.RunSpec)
-    params = block.params
-    bench = block.benchmark
-    policy = block.policy
-    model = ctx.model
-    model isa JuMP.Model || error("CircularTwoCountryFiscalOnePeriodBlock requires a JuMP-backed JCGE runtime context")
-    _register_metadata!(ctx, block)
-
-    z = Dict{Symbol,Any}()
+function _ensure_two_country_outputs!(ctx::JCGERuntime.KernelContext, bench)
     for a in (TWO_COUNTRY_PRODUCTION_ACTIVITIES..., :TST_C)
-        z[a] = _ensure_var!(ctx, _global_var(:Z, a); start = bench.output[a])
+        _ensure_var!(ctx, _global_var(:Z, a); start = bench.output[a])
     end
+    return nothing
+end
 
-    factors = Dict{Tuple{Symbol,Symbol},Any}()
+function _ensure_two_country_factors!(ctx::JCGERuntime.KernelContext, bench)
     for a in TWO_COUNTRY_PRODUCTION_ACTIVITIES
         for h in _two_country_activity_factors(a)
-            factors[(h, a)] = _ensure_var!(ctx, _global_var(:F, h, a);
+            _ensure_var!(ctx, _global_var(:F, h, a);
                 start = bench.factor_input[(h, a)])
         end
     end
+    return nothing
+end
 
-    eol = Dict{Symbol,Any}()
-    ret = params.delta * bench.stock0
+function _ensure_two_country_eol!(ctx::JCGERuntime.KernelContext, bench)
     for use in EOL_USES
-        eol[use] = _ensure_var!(ctx, _global_var(:EOL_C, use);
+        _ensure_var!(ctx, _global_var(:EOL_C, use);
             lower = 0.0, start = bench.eol_allocation[use])
     end
+    return nothing
+end
 
-    metal_eff = Dict{Symbol,Any}()
-    virgin_use = Dict{Symbol,Any}()
-    recycled_use = Dict{Symbol,Any}()
+function _ensure_two_country_material_inputs!(ctx::JCGERuntime.KernelContext, params, bench)
     for route in MATERIAL_ROUTES
         activity = _two_country_route_activity(route)
-        metal_eff[route] = _ensure_var!(ctx, _global_var(:MEFF, route, :C);
+        _ensure_var!(ctx, _global_var(:MEFF, route, :C);
             start = _metal_intensity(params, route) * bench.output[activity])
-        virgin_use[route] = _ensure_var!(ctx, _global_var(:VUSE, route, :M, :C);
+        _ensure_var!(ctx, _global_var(:VUSE, route, :M, :C);
             start = bench.material_input[(:VMTL, route)])
-        recycled_use[route] = _ensure_var!(ctx, _global_var(:RUSE, route, :C);
+        _ensure_var!(ctx, _global_var(:RUSE, route, :C);
             start = bench.material_input[(:RMTL, route)])
     end
+    return nothing
+end
+
+function _ensure_two_country_price_vars!(ctx::JCGERuntime.KernelContext, params, bench,
+    policy::PolicyWedges)
+    _ensure_var!(ctx, :P_BRD_M; start = 1.0)
+    _ensure_var!(ctx, :P_BRD_C; start = 1.0)
+    for use in EOL_USES
+        _ensure_var!(ctx, _global_var(:P_EOL_C, use); start = _eol_unit_cost(policy, use))
+    end
+    for material in MATERIALS
+        _ensure_var!(ctx, _global_var(:P_MAT_C, material);
+            start = _two_country_material_unit_cost(params, bench, policy, material))
+    end
+    for route in MATERIAL_ROUTES
+        _ensure_var!(ctx, _global_var(:P_MEFF_C, route); start = 1.0)
+    end
+    for route in ROUTES
+        _ensure_var!(ctx, _global_var(:P_ROUTE_C, route);
+            start = _two_country_route_unit_cost(params, bench, policy, route))
+    end
+    _ensure_var!(ctx, :P_TST_C; start = 1.0)
+    return nothing
+end
+
+function _ensure_two_country_fiscal_vars!(ctx::JCGERuntime.KernelContext, bench)
+    _ensure_var!(ctx, :Y_PREFISCAL_M; start = bench.prefiscal_income_m)
+    _ensure_var!(ctx, :Y_HOH_M; start = bench.disposable_income_m)
+    _ensure_var!(ctx, :Y_PREFISCAL_C; start = bench.prefiscal_income_c)
+    _ensure_var!(ctx, :Y_HOH_C; start = bench.prefiscal_income_c)
+    _ensure_var!(ctx, :GOV_NET_C; lower = nothing, start = 0.0)
+    _ensure_var!(ctx, :GOV_REVENUE_C; lower = 0.0, start = 0.0)
+    _ensure_var!(ctx, :GOV_SUBSIDY_C; lower = 0.0, start = 0.0)
+    _ensure_var!(ctx, :GOV_TRANSFER_C; lower = nothing, start = 0.0)
+    return nothing
+end
+
+function JCGECore.build!(block::TwoCountryBlock{:technology},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    bench = block.benchmark
+    _require_two_country_model(ctx, block)
+    _ensure_two_country_outputs!(ctx, bench)
+    _ensure_two_country_factors!(ctx, bench)
 
     for a in TWO_COUNTRY_PRODUCTION_ACTIVITIES
         lab, cap = _two_country_activity_factors(a)
         beta_lab = bench.factor_share[(lab, a)]
         beta_cap = bench.factor_share[(cap, a)]
         scale = bench.productivity[a]
-        constraint = JuMP.@NLconstraint(model,
-            z[a] <= scale * factors[(lab, a)]^beta_lab * factors[(cap, a)]^beta_cap)
-        _register_constraint!(ctx, block, :technology, constraint;
-            info = "Z[$(a)] <= A[$(a)] * local Cobb-Douglas factor composite",
+        expr = _ele(_evar(:Z, a),
+            _emul(
+                _econst(scale),
+                _epow(_evar(:F, lab, a), _econst(beta_lab)),
+                _epow(_evar(:F, cap, a), _econst(beta_cap))))
+        _register_ast_equation!(ctx, block, :technology, expr;
+            info = "activity output is limited by calibrated local Cobb-Douglas factor technology",
             indices = (a,))
     end
 
     for h in TWO_COUNTRY_FACTORS
         activities = [a for a in TWO_COUNTRY_PRODUCTION_ACTIVITIES
                       if h in _two_country_activity_factors(a)]
-        constraint = JuMP.@constraint(model,
-            sum(factors[(h, a)] for a in activities) <= bench.factor_endowment[h])
-        _register_constraint!(ctx, block, :factor_endowment, constraint;
-            info = "sum(F[$(h),a]) <= FF[$(h)]",
+        expr = _ele(
+            _sum_expr([_evar(:F, h, a) for a in activities]),
+            _econst(bench.factor_endowment[h]))
+        _register_ast_equation!(ctx, block, :factor_endowment, expr;
+            info = "aggregate factor use is limited by the country-specific factor endowment",
             indices = (h,))
     end
 
+    return nothing
+end
+
+function JCGECore.build!(block::TwoCountryBlock{:eol},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    params = block.params
+    bench = block.benchmark
+    policy = block.policy
+    _require_two_country_model(ctx, block)
+    _ensure_two_country_eol!(ctx, bench)
+
+    ret = params.delta * bench.stock0
     eol_shares = _eol_allocation_shares(params, bench, policy)
     for use in EOL_USES
-        constraint = JuMP.@constraint(model, eol[use] == eol_shares[use] * ret)
-        _register_constraint!(ctx, block, :eol_allocation, constraint;
-            info = "EOL_C[$(use)] follows calibrated allocation shares from policy-adjusted EOL costs",
+        expr = _eeq(_evar(:EOL_C, use), _econst(eol_shares[use] * ret))
+        _register_ast_equation!(ctx, block, :eol_allocation, expr;
+            info = "country C EOL allocation follows calibrated policy-adjusted use shares",
             indices = (use,))
     end
 
     for route in (:REF, :REP, :REU)
-        constraint = JuMP.@constraint(model,
-            z[_two_country_route_activity(route)] <= _route_yield(params, route) * eol[route])
-        _register_constraint!(ctx, block, :route_yield, constraint;
-            info = "Z[$(route)_C] <= yield[$(route)] * EOL_C[$(route)]",
+        expr = _ele(_evar(:Z, _two_country_route_activity(route)),
+            _scaled(_route_yield(params, route), _evar(:EOL_C, route)))
+        _register_ast_equation!(ctx, block, :route_yield, expr;
+            info = "country C life-extension route output is limited by available EOL units and route yield",
             indices = (route,))
     end
 
-    constraint = JuMP.@constraint(model, z[:RMTL_C] <= params.yield.rmtl * eol[:REC])
-    _register_constraint!(ctx, block, :recycling_yield, constraint;
-        info = "Z[RMTL_C] <= yield[RMTL] * EOL_C[REC]")
+    expr = _ele(_evar(:Z, :RMTL_C), _scaled(params.yield.rmtl, _evar(:EOL_C, :REC)))
+    _register_ast_equation!(ctx, block, :recycling_yield, expr;
+        info = "country C recycled material output is limited by recycling EOL units and recycling yield")
+
+    return nothing
+end
+
+function JCGECore.build!(block::TwoCountryBlock{:material},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    params = block.params
+    bench = block.benchmark
+    _require_two_country_model(ctx, block)
+    _ensure_two_country_material_inputs!(ctx, params, bench)
 
     for route in MATERIAL_ROUTES
         activity = _two_country_route_activity(route)
         alpha = _metal_intensity(params, route)
-        constraint = JuMP.@constraint(model, alpha * z[activity] <= metal_eff[route])
-        _register_constraint!(ctx, block, :route_material_requirement, constraint;
-            info = "metal_intensity[$(route)] * Z[$(activity)] <= MEFF[$(route),C]",
+        expr = _ele(_scaled(alpha, _evar(:Z, activity)), _evar(:MEFF, route, :C))
+        _register_ast_equation!(ctx, block, :route_material_requirement, expr;
+            info = "country C material-using route output requires effective metal input",
             indices = (route,))
     end
 
@@ -175,277 +212,357 @@ function JCGECore.build!(block::CircularTwoCountryFiscalOnePeriodBlock,
         theta_r = bench.route_metal_share[(:RMTL, route)]
         scale = bench.metal_scale[route]
         if abs(rho_metal) < 1.0e-8
-            constraint = JuMP.@NLconstraint(model,
-                metal_eff[route] <= scale * virgin_use[route]^theta_v *
-                                    (phi * recycled_use[route])^theta_r)
+            rhs = _emul(
+                _econst(scale),
+                _epow(_evar(:VUSE, route, :M, :C), _econst(theta_v)),
+                _epow(_scaled(phi, _evar(:RUSE, route, :C)), _econst(theta_r)))
         else
-            constraint = JuMP.@NLconstraint(model,
-                metal_eff[route] <=
-                scale *
-                (theta_v * virgin_use[route]^rho_metal +
-                 theta_r * (phi * recycled_use[route])^rho_metal)^(1.0 / rho_metal))
+            rhs = _emul(
+                _econst(scale),
+                _epow(
+                    _eadd(
+                        _scaled(theta_v,
+                            _epow(_evar(:VUSE, route, :M, :C), _econst(rho_metal))),
+                        _scaled(theta_r,
+                            _epow(_scaled(phi, _evar(:RUSE, route, :C)), _econst(rho_metal)))),
+                    _econst(1.0 / rho_metal)))
         end
-        _register_constraint!(ctx, block, :metal_composite, constraint;
-            info = "MEFF[$(route),C] <= calibrated CES(imported VMTL_M, quality * RMTL_C)",
+        expr = _ele(_evar(:MEFF, route, :C), rhs)
+        _register_ast_equation!(ctx, block, :metal_composite, expr;
+            info = "country C effective metal input is limited by the calibrated imported-virgin and local-recycled material composite",
             indices = (route,))
     end
 
-    constraint = JuMP.@constraint(model,
-        sum(virgin_use[route] for route in MATERIAL_ROUTES) == z[:VMTL_M])
-    _register_constraint!(ctx, block, :virgin_material_import_balance, constraint;
-        info = "sum(VUSE[route,M->C]) == Z[VMTL_M]")
+    expr = _eeq(_sum_expr([_evar(:VUSE, route, :M, :C) for route in MATERIAL_ROUTES]),
+        _evar(:Z, :VMTL_M))
+    _register_ast_equation!(ctx, block, :virgin_material_import_balance, expr;
+        info = "country C imported virgin material use balances country M virgin material output")
 
-    constraint = JuMP.@constraint(model,
-        sum(recycled_use[route] for route in MATERIAL_ROUTES) == z[:RMTL_C])
-    _register_constraint!(ctx, block, :recycled_material_balance, constraint;
-        info = "sum(RUSE[route,C]) == Z[RMTL_C]")
+    expr = _eeq(_sum_expr([_evar(:RUSE, route, :C) for route in MATERIAL_ROUTES]),
+        _evar(:Z, :RMTL_C))
+    _register_ast_equation!(ctx, block, :recycled_material_balance, expr;
+        info = "country C recycled material use balances country C recycled material output")
+
+    return nothing
+end
+
+function JCGECore.build!(block::TwoCountryBlock{:route_service},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    params = block.params
+    bench = block.benchmark
+    _require_two_country_model(ctx, block)
 
     rho_routes = (params.sigma_routes - 1.0) / params.sigma_routes
     if abs(rho_routes) < 1.0e-8
-        constraint = JuMP.@NLconstraint(model,
-            z[:TST_C] <=
-            bench.route_scale *
-            prod(z[_two_country_route_activity(route)]^bench.route_share[route]
-                 for route in ROUTES))
+        rhs = _emul(
+            _econst(bench.route_scale),
+            _prod_expr([
+                _epow(_evar(:Z, _two_country_route_activity(route)),
+                    _econst(bench.route_share[route]))
+                for route in ROUTES
+            ]))
     else
-        constraint = JuMP.@NLconstraint(model,
-            z[:TST_C] <=
-            bench.route_scale *
-            (sum(bench.route_share[route] *
-                 z[_two_country_route_activity(route)]^rho_routes
-                 for route in ROUTES))^(1.0 / rho_routes))
+        rhs = _emul(
+            _econst(bench.route_scale),
+            _epow(
+                _sum_expr([
+                    _scaled(bench.route_share[route],
+                        _epow(_evar(:Z, _two_country_route_activity(route)),
+                            _econst(rho_routes)))
+                    for route in ROUTES
+                ]),
+                _econst(1.0 / rho_routes)))
     end
-    _register_constraint!(ctx, block, :toaster_service_composite, constraint;
-        info = "Z[TST_C] <= calibrated CES(Z[NEW_C], Z[REF_C], Z[REP_C], Z[REU_C])")
+    expr = _ele(_evar(:Z, :TST_C), rhs)
+    _register_ast_equation!(ctx, block, :toaster_service_composite, expr;
+        info = "country C toaster-service output is limited by the calibrated route composite")
 
-    if block.replicate_benchmark
-        for a in (TWO_COUNTRY_PRODUCTION_ACTIVITIES..., :TST_C)
-            constraint = JuMP.@constraint(model, z[a] == bench.output[a])
-            _register_constraint!(ctx, block, :replicate_output, constraint;
-                info = "Z[$(a)] == benchmark output", indices = (a,))
-        end
-        for a in TWO_COUNTRY_PRODUCTION_ACTIVITIES, h in _two_country_activity_factors(a)
-            constraint = JuMP.@constraint(model, factors[(h, a)] == bench.factor_input[(h, a)])
-            _register_constraint!(ctx, block, :replicate_factor_input, constraint;
-                info = "F[$(h),$(a)] == benchmark factor input", indices = (h, a))
-        end
-        for use in EOL_USES
-            constraint = JuMP.@constraint(model, eol[use] == bench.eol_allocation[use])
-            _register_constraint!(ctx, block, :replicate_eol, constraint;
-                info = "EOL_C[$(use)] == benchmark EOL allocation", indices = (use,))
-        end
-        for route in MATERIAL_ROUTES
-            constraint = JuMP.@constraint(model, virgin_use[route] == bench.material_input[(:VMTL, route)])
-            _register_constraint!(ctx, block, :replicate_virgin_use, constraint;
-                info = "VUSE[$(route),M->C] == benchmark virgin-metal use", indices = (route,))
-            constraint = JuMP.@constraint(model, recycled_use[route] == bench.material_input[(:RMTL, route)])
-            _register_constraint!(ctx, block, :replicate_recycled_use, constraint;
-                info = "RUSE[$(route),C] == benchmark recycled-metal use", indices = (route,))
-        end
+    return nothing
+end
+
+function JCGECore.build!(block::TwoCountryBlock{:replication},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    block.replicate_benchmark || return nothing
+
+    params = block.params
+    bench = block.benchmark
+    _require_two_country_model(ctx, block)
+    _ensure_two_country_outputs!(ctx, bench)
+    _ensure_two_country_factors!(ctx, bench)
+    _ensure_two_country_eol!(ctx, bench)
+    _ensure_two_country_material_inputs!(ctx, params, bench)
+
+    for a in (TWO_COUNTRY_PRODUCTION_ACTIVITIES..., :TST_C)
+        expr = _eeq(_evar(:Z, a), _econst(bench.output[a]))
+        _register_ast_equation!(ctx, block, :replicate_output, expr;
+            info = "benchmark output replication", indices = (a,))
+    end
+    for a in TWO_COUNTRY_PRODUCTION_ACTIVITIES, h in _two_country_activity_factors(a)
+        expr = _eeq(_evar(:F, h, a), _econst(bench.factor_input[(h, a)]))
+        _register_ast_equation!(ctx, block, :replicate_factor_input, expr;
+            info = "benchmark factor-input replication", indices = (h, a))
+    end
+    for use in EOL_USES
+        expr = _eeq(_evar(:EOL_C, use), _econst(bench.eol_allocation[use]))
+        _register_ast_equation!(ctx, block, :replicate_eol, expr;
+            info = "benchmark EOL allocation replication", indices = (use,))
+    end
+    for route in MATERIAL_ROUTES
+        expr = _eeq(_evar(:VUSE, route, :M, :C), _econst(bench.material_input[(:VMTL, route)]))
+        _register_ast_equation!(ctx, block, :replicate_virgin_use, expr;
+            info = "benchmark imported virgin-material-use replication", indices = (route,))
+        expr = _eeq(_evar(:RUSE, route, :C), _econst(bench.material_input[(:RMTL, route)]))
+        _register_ast_equation!(ctx, block, :replicate_recycled_use, expr;
+            info = "benchmark recycled-material-use replication", indices = (route,))
     end
 
-    p_brd_m = _ensure_var!(ctx, :P_BRD_M; start = 1.0)
-    p_brd_c = _ensure_var!(ctx, :P_BRD_C; start = 1.0)
-    constraint = JuMP.@constraint(model, p_brd_m == 1.0)
-    _register_constraint!(ctx, block, :numeraire_m, constraint; info = "P[BRD_M] == 1")
-    constraint = JuMP.@constraint(model, p_brd_c == 1.0)
-    _register_constraint!(ctx, block, :numeraire_c, constraint; info = "P[BRD_C] == 1")
+    return nothing
+end
 
-    p_eol = Dict{Symbol,Any}()
+function JCGECore.build!(block::TwoCountryBlock{:price},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    params = block.params
+    bench = block.benchmark
+    policy = block.policy
+    _require_two_country_model(ctx, block)
+    _ensure_two_country_price_vars!(ctx, params, bench, policy)
+
+    expr = _eeq(_evar(:P_BRD_M), _econst(1.0))
+    _register_ast_equation!(ctx, block, :numeraire_m, expr; info = "country M bread price numeraire")
+    expr = _eeq(_evar(:P_BRD_C), _econst(1.0))
+    _register_ast_equation!(ctx, block, :numeraire_c, expr; info = "country C bread price numeraire")
+
     for use in EOL_USES
         unit_cost = _eol_unit_cost(policy, use)
-        p_eol[use] = _ensure_var!(ctx, _global_var(:P_EOL_C, use); start = unit_cost)
-        constraint = JuMP.@constraint(model, p_eol[use] == unit_cost)
-        _register_constraint!(ctx, block, :eol_price, constraint;
-            info = "P_EOL_C[$(use)] equals the tax-inclusive EOL use cost",
+        expr = _eeq(_evar(:P_EOL_C, use), _econst(unit_cost))
+        _register_ast_equation!(ctx, block, :eol_price, expr;
+            info = "country C EOL use price is set from policy-adjusted unit cost",
             indices = (use,))
     end
 
-    p_material = Dict{Symbol,Any}()
-    for material in MATERIALS
-        p_material[material] = _ensure_var!(ctx, _global_var(:P_MAT_C, material);
-            start = _two_country_material_unit_cost(params, bench, policy, material))
-    end
-    constraint = JuMP.@constraint(model,
-        p_material[:VMTL] >= _two_country_factor_unit_cost(bench, :VMTL_M) +
-                             policy.material[:VMTL])
-    _register_constraint!(ctx, block, :material_price, constraint;
-        info = "P_MAT_C[VMTL] is imported VMTL_M cost plus material wedge",
+    expr = _ege(_evar(:P_MAT_C, :VMTL),
+        _econst(_two_country_factor_unit_cost(bench, :VMTL_M) + policy.material[:VMTL]))
+    _register_ast_equation!(ctx, block, :material_price, expr;
+        info = "country C virgin material price covers imported material cost and material policy wedge",
         indices = (:VMTL,))
-    constraint = JuMP.@constraint(model,
-        p_material[:RMTL] >=
-        _two_country_factor_unit_cost(bench, :RMTL_C) +
-        _two_country_recycling_eol_coefficient(bench) * p_eol[:REC] +
-        policy.material[:RMTL])
-    _register_constraint!(ctx, block, :material_price, constraint;
-        info = "P_MAT_C[RMTL] is recycling factor cost plus EOL input cost plus material wedge",
+    expr = _ege(_evar(:P_MAT_C, :RMTL),
+        _eadd(
+            _econst(_two_country_factor_unit_cost(bench, :RMTL_C) + policy.material[:RMTL]),
+            _scaled(_two_country_recycling_eol_coefficient(bench), _evar(:P_EOL_C, :REC))))
+    _register_ast_equation!(ctx, block, :material_price, expr;
+        info = "country C recycled material price covers factor cost, EOL input cost, and material policy wedge",
         indices = (:RMTL,))
 
-    p_eff = Dict{Symbol,Any}()
     for route in MATERIAL_ROUTES
-        p_eff[route] = _ensure_var!(ctx, _global_var(:P_MEFF_C, route); start = 1.0)
         theta_v = bench.route_metal_share[(:VMTL, route)]
         theta_r = bench.route_metal_share[(:RMTL, route)]
         if abs(params.sigma_metal - 1.0) < 1.0e-8
-            constraint = JuMP.@NLconstraint(model,
-                p_eff[route] == p_material[:VMTL]^theta_v * p_material[:RMTL]^theta_r)
+            expr = _eeq(_evar(:P_MEFF_C, route),
+                _emul(
+                    _epow(_evar(:P_MAT_C, :VMTL), _econst(theta_v)),
+                    _epow(_evar(:P_MAT_C, :RMTL), _econst(theta_r))))
         else
-            constraint = JuMP.@NLconstraint(model,
-                p_eff[route] ==
-                (theta_v * p_material[:VMTL]^(1.0 - params.sigma_metal) +
-                 theta_r * p_material[:RMTL]^(1.0 - params.sigma_metal))^
-                (1.0 / (1.0 - params.sigma_metal)))
+            expr = _eeq(_evar(:P_MEFF_C, route),
+                _epow(
+                    _eadd(
+                        _scaled(theta_v,
+                            _epow(_evar(:P_MAT_C, :VMTL), _econst(1.0 - params.sigma_metal))),
+                        _scaled(theta_r,
+                            _epow(_evar(:P_MAT_C, :RMTL), _econst(1.0 - params.sigma_metal)))),
+                    _econst(1.0 / (1.0 - params.sigma_metal))))
         end
-        _register_constraint!(ctx, block, :metal_price_index, constraint;
-            info = "P_MEFF_C[$(route)] is a CES material price index",
+        _register_ast_equation!(ctx, block, :metal_price_index, expr;
+            info = "country C effective metal price is the calibrated CES material price index",
             indices = (route,))
     end
 
-    p_route = Dict{Symbol,Any}()
-    for route in ROUTES
-        p_route[route] = _ensure_var!(ctx, _global_var(:P_ROUTE_C, route);
-            start = _two_country_route_unit_cost(params, bench, policy, route))
-    end
-    constraint = JuMP.@constraint(model,
-        p_route[:NEW] >=
-        _two_country_factor_unit_cost(bench, :NEW_C) +
-        _metal_intensity(params, :NEW) * p_eff[:NEW] +
-        policy.route[:NEW])
-    _register_constraint!(ctx, block, :route_price, constraint;
-        info = "P_ROUTE_C[NEW] is bounded below by factor, material, and route-wedge costs",
+    expr = _ege(_evar(:P_ROUTE_C, :NEW),
+        _eadd(
+            _econst(_two_country_factor_unit_cost(bench, :NEW_C) + policy.route[:NEW]),
+            _scaled(_metal_intensity(params, :NEW), _evar(:P_MEFF_C, :NEW))))
+    _register_ast_equation!(ctx, block, :route_price, expr;
+        info = "country C new route price covers factor, material, and route-wedge costs",
         indices = (:NEW,))
     for route in (:REF, :REP)
-        constraint = JuMP.@constraint(model,
-            p_route[route] >=
-            _two_country_factor_unit_cost(bench, _two_country_route_activity(route)) +
-            _metal_intensity(params, route) * p_eff[route] +
-            _two_country_route_eol_coefficient(bench, route) * p_eol[route] +
-            policy.route[route])
-        _register_constraint!(ctx, block, :route_price, constraint;
-            info = "P_ROUTE_C[$(route)] is bounded below by factor, material, EOL, and route-wedge costs",
+        expr = _ege(_evar(:P_ROUTE_C, route),
+            _eadd(
+                _econst(_two_country_factor_unit_cost(bench, _two_country_route_activity(route)) +
+                        policy.route[route]),
+                _scaled(_metal_intensity(params, route), _evar(:P_MEFF_C, route)),
+                _scaled(_two_country_route_eol_coefficient(bench, route), _evar(:P_EOL_C, route))))
+        _register_ast_equation!(ctx, block, :route_price, expr;
+            info = "country C circular material-using route price covers factor, material, EOL, and route-wedge costs",
             indices = (route,))
     end
-    constraint = JuMP.@constraint(model,
-        p_route[:REU] >=
-        _two_country_factor_unit_cost(bench, :REU_C) +
-        _two_country_route_eol_coefficient(bench, :REU) * p_eol[:REU] +
-        policy.route[:REU])
-    _register_constraint!(ctx, block, :route_price, constraint;
-        info = "P_ROUTE_C[REU] is bounded below by factor, EOL, and route-wedge costs",
+    expr = _ege(_evar(:P_ROUTE_C, :REU),
+        _eadd(
+            _econst(_two_country_factor_unit_cost(bench, :REU_C) + policy.route[:REU]),
+            _scaled(_two_country_route_eol_coefficient(bench, :REU), _evar(:P_EOL_C, :REU))))
+    _register_ast_equation!(ctx, block, :route_price, expr;
+        info = "country C reuse route price covers factor, EOL, and route-wedge costs",
         indices = (:REU,))
 
-    p_tst = _ensure_var!(ctx, :P_TST_C; start = 1.0)
     if abs(params.sigma_routes - 1.0) < 1.0e-8
-        constraint = JuMP.@NLconstraint(model,
-            p_tst ==
-            prod(p_route[route]^bench.route_share[route] for route in ROUTES))
+        expr = _eeq(_evar(:P_TST_C),
+            _prod_expr([
+                _epow(_evar(:P_ROUTE_C, route), _econst(bench.route_share[route]))
+                for route in ROUTES
+            ]))
     else
-        constraint = JuMP.@NLconstraint(model,
-            p_tst ==
-            (sum(bench.route_share[route] * p_route[route]^(1.0 - params.sigma_routes)
-                 for route in ROUTES))^(1.0 / (1.0 - params.sigma_routes)))
+        expr = _eeq(_evar(:P_TST_C),
+            _epow(
+                _sum_expr([
+                    _scaled(bench.route_share[route],
+                        _epow(_evar(:P_ROUTE_C, route), _econst(1.0 - params.sigma_routes)))
+                    for route in ROUTES
+                ]),
+                _econst(1.0 / (1.0 - params.sigma_routes))))
     end
-    _register_constraint!(ctx, block, :toaster_service_price, constraint;
-        info = "P[TST_C] is a CES route price index")
+    _register_ast_equation!(ctx, block, :toaster_service_price, expr;
+        info = "country C toaster-service price is the calibrated CES route price index")
 
-    y_prefiscal_m = _ensure_var!(ctx, :Y_PREFISCAL_M; start = bench.prefiscal_income_m)
-    y_hoh_m = _ensure_var!(ctx, :Y_HOH_M; start = bench.disposable_income_m)
-    y_prefiscal_c = _ensure_var!(ctx, :Y_PREFISCAL_C; start = bench.prefiscal_income_c)
-    y_hoh_c = _ensure_var!(ctx, :Y_HOH_C; start = bench.prefiscal_income_c)
-    gov_net = _ensure_var!(ctx, :GOV_NET_C; lower = nothing, start = 0.0)
-    gov_revenue = _ensure_var!(ctx, :GOV_REVENUE_C; lower = 0.0, start = 0.0)
-    gov_subsidy = _ensure_var!(ctx, :GOV_SUBSIDY_C; lower = 0.0, start = 0.0)
-    gov_transfer = _ensure_var!(ctx, :GOV_TRANSFER_C; lower = nothing, start = 0.0)
+    return nothing
+end
 
-    net_expr = _two_country_policy_net_expression(policy, z, eol, virgin_use, recycled_use)
-    revenue_expr = _two_country_policy_revenue_expression(policy, z, eol, virgin_use, recycled_use)
-    subsidy_expr = _two_country_policy_subsidy_expression(policy, z, eol, virgin_use, recycled_use)
+function JCGECore.build!(block::TwoCountryBlock{:fiscal_income},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    bench = block.benchmark
+    policy = block.policy
+    _require_two_country_model(ctx, block)
+    _ensure_two_country_fiscal_vars!(ctx, bench)
 
-    constraint = JuMP.@constraint(model, y_prefiscal_m == bench.prefiscal_income_m)
-    _register_constraint!(ctx, block, :prefiscal_income_m, constraint;
-        info = "Y_PREFISCAL_M equals mining-country factor endowment income")
-    constraint = JuMP.@constraint(model, y_hoh_m == y_prefiscal_m - bench.nfa_transfer)
-    _register_constraint!(ctx, block, :household_income_m, constraint;
-        info = "Y_HOH_M equals M prefiscal income net of benchmark NFA outflow")
+    route_var = route -> _evar(:Z, _two_country_route_activity(route))
+    virgin_var = route -> _evar(:VUSE, route, :M, :C)
+    recycled_var = route -> _evar(:RUSE, route, :C)
+    eol_var = use -> _evar(:EOL_C, use)
 
-    constraint = JuMP.@constraint(model, y_prefiscal_c == bench.prefiscal_income_c)
-    _register_constraint!(ctx, block, :prefiscal_income_c, constraint;
-        info = "Y_PREFISCAL_C equals C factor, EOL, and benchmark NFA income")
+    expr = _eeq(_evar(:Y_PREFISCAL_M), _econst(bench.prefiscal_income_m))
+    _register_ast_equation!(ctx, block, :prefiscal_income_m, expr;
+        info = "country M prefiscal income records mining-country factor endowment income")
+    expr = _eeq(_evar(:Y_HOH_M),
+        _eadd(_evar(:Y_PREFISCAL_M), _econst(-bench.nfa_transfer)))
+    _register_ast_equation!(ctx, block, :household_income_m, expr;
+        info = "country M household income records prefiscal income net of benchmark financial outflow")
 
-    constraint = JuMP.@constraint(model, gov_net == net_expr)
-    _register_constraint!(ctx, block, :government_net_revenue_c, constraint;
-        info = "GOV_NET_C equals C policy revenue net of subsidy outlays")
-    constraint = JuMP.@constraint(model, gov_revenue == revenue_expr)
-    _register_constraint!(ctx, block, :government_revenue_c, constraint;
-        info = "GOV_REVENUE_C equals positive C policy wedge receipts")
-    constraint = JuMP.@constraint(model, gov_subsidy == subsidy_expr)
-    _register_constraint!(ctx, block, :government_subsidy_c, constraint;
-        info = "GOV_SUBSIDY_C equals negative C policy wedge outlays")
-    constraint = JuMP.@constraint(model, gov_transfer == gov_net)
-    _register_constraint!(ctx, block, :government_transfer_c, constraint;
-        info = "GOV_TRANSFER_C rebates net revenue to C households")
-    constraint = JuMP.@constraint(model, y_hoh_c == y_prefiscal_c + gov_transfer)
-    _register_constraint!(ctx, block, :household_income_c, constraint;
-        info = "Y_HOH_C equals C prefiscal income plus C net government transfer")
+    expr = _eeq(_evar(:Y_PREFISCAL_C), _econst(bench.prefiscal_income_c))
+    _register_ast_equation!(ctx, block, :prefiscal_income_c, expr;
+        info = "country C prefiscal income records factor, EOL, and benchmark financial inflow income")
+
+    expr = _eeq(_evar(:GOV_NET_C),
+        _policy_net_ast(policy;
+            route_var = route_var,
+            virgin_var = virgin_var,
+            recycled_var = recycled_var,
+            eol_var = eol_var))
+    _register_ast_equation!(ctx, block, :government_net_revenue_c, expr;
+        info = "country C net government revenue records policy revenue net of subsidy outlays")
+    expr = _eeq(_evar(:GOV_REVENUE_C),
+        _policy_revenue_ast(policy;
+            route_var = route_var,
+            virgin_var = virgin_var,
+            recycled_var = recycled_var,
+            eol_var = eol_var))
+    _register_ast_equation!(ctx, block, :government_revenue_c, expr;
+        info = "country C gross government revenue records positive policy wedge receipts")
+    expr = _eeq(_evar(:GOV_SUBSIDY_C),
+        _policy_subsidy_ast(policy;
+            route_var = route_var,
+            virgin_var = virgin_var,
+            recycled_var = recycled_var,
+            eol_var = eol_var))
+    _register_ast_equation!(ctx, block, :government_subsidy_c, expr;
+        info = "country C gross government subsidy records negative policy wedge outlays")
+    expr = _eeq(_evar(:GOV_TRANSFER_C), _evar(:GOV_NET_C))
+    _register_ast_equation!(ctx, block, :government_transfer_c, expr;
+        info = "country C net government revenue is rebated to country C households")
+    expr = _eeq(_evar(:Y_HOH_C), _eadd(_evar(:Y_PREFISCAL_C), _evar(:GOV_TRANSFER_C)))
+    _register_ast_equation!(ctx, block, :household_income_c, expr;
+        info = "country C household income includes prefiscal income and net government transfer")
+
+    return nothing
+end
+
+function JCGECore.build!(block::TwoCountryBlock{:demand},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    params = block.params
+    bench = block.benchmark
+    _require_two_country_model(ctx, block)
 
     y0_c = bench.prefiscal_income_c
-    constraint = JuMP.@NLconstraint(model,
-        z[:TST_C] == bench.output[:TST_C] * (y_hoh_c / y0_c) * p_tst^(-params.eta_service))
-    _register_constraint!(ctx, block, :household_toaster_demand_c, constraint;
-        info = "Z[TST_C] follows an isoelastic service-demand curve with C income scaling")
+    expr = _eeq(_evar(:Z, :TST_C),
+        _emul(
+            _econst(bench.output[:TST_C]),
+            _ediv(_evar(:Y_HOH_C), _econst(y0_c)),
+            _epow(_evar(:P_TST_C), _econst(-params.eta_service))))
+    _register_ast_equation!(ctx, block, :household_toaster_demand_c, expr;
+        info = "country C toaster-service demand follows an income-scaled isoelastic demand curve")
 
-    constraint = JuMP.@NLconstraint(model, z[:BRD_C] == (y_hoh_c - p_tst * z[:TST_C]) / p_brd_c)
-    _register_constraint!(ctx, block, :household_bread_demand_c, constraint;
-        info = "Z[BRD_C] absorbs residual C household income after toaster-service expenditure")
-    constraint = JuMP.@NLconstraint(model, z[:BRD_M] == y_hoh_m / p_brd_m)
-    _register_constraint!(ctx, block, :household_bread_demand_m, constraint;
-        info = "Z[BRD_M] follows M disposable income")
+    expr = _eeq(_evar(:Z, :BRD_C),
+        _ediv(
+            _eadd(_evar(:Y_HOH_C), _eneg(_emul(_evar(:P_TST_C), _evar(:Z, :TST_C)))),
+            _evar(:P_BRD_C)))
+    _register_ast_equation!(ctx, block, :household_bread_demand_c, expr;
+        info = "country C bread demand absorbs residual household income after toaster-service expenditure")
+    expr = _eeq(_evar(:Z, :BRD_M), _ediv(_evar(:Y_HOH_M), _evar(:P_BRD_M)))
+    _register_ast_equation!(ctx, block, :household_bread_demand_m, expr;
+        info = "country M bread demand follows disposable income")
 
     for route in ROUTES
         activity = _two_country_route_activity(route)
-        constraint = JuMP.@NLconstraint(model,
-            z[activity] ==
-            bench.route_share[route] * z[:TST_C] * (p_tst / p_route[route])^params.sigma_routes)
-        _register_constraint!(ctx, block, :route_demand_c, constraint;
-            info = "Z[$(activity)] follows CES demand from the tax-inclusive route price",
+        expr = _eeq(_evar(:Z, activity),
+            _emul(
+                _econst(bench.route_share[route]),
+                _evar(:Z, :TST_C),
+                _epow(_ediv(_evar(:P_TST_C), _evar(:P_ROUTE_C, route)),
+                    _econst(params.sigma_routes))))
+        _register_ast_equation!(ctx, block, :route_demand_c, expr;
+            info = "country C route demand follows calibrated CES route substitution",
             indices = (route,))
     end
 
     for route in MATERIAL_ROUTES
         base_eff = _metal_intensity(params, route) * bench.output[_two_country_route_activity(route)]
-        constraint = JuMP.@NLconstraint(model,
-            virgin_use[route] ==
-            bench.material_input[(:VMTL, route)] *
-            (metal_eff[route] / base_eff) *
-            (p_eff[route] / p_material[:VMTL])^params.sigma_metal)
-        _register_constraint!(ctx, block, :virgin_material_demand_c, constraint;
-            info = "VUSE[$(route),M->C] follows CES demand from the tax-inclusive imported virgin-material price",
+        expr = _eeq(_evar(:VUSE, route, :M, :C),
+            _emul(
+                _econst(bench.material_input[(:VMTL, route)]),
+                _ediv(_evar(:MEFF, route, :C), _econst(base_eff)),
+                _epow(_ediv(_evar(:P_MEFF_C, route), _evar(:P_MAT_C, :VMTL)),
+                    _econst(params.sigma_metal))))
+        _register_ast_equation!(ctx, block, :virgin_material_demand_c, expr;
+            info = "country C imported virgin material demand follows calibrated CES material substitution",
             indices = (route,))
 
-        constraint = JuMP.@NLconstraint(model,
-            recycled_use[route] ==
-            bench.material_input[(:RMTL, route)] *
-            (metal_eff[route] / base_eff) *
-            (p_eff[route] / p_material[:RMTL])^params.sigma_metal)
-        _register_constraint!(ctx, block, :recycled_material_demand_c, constraint;
-            info = "RUSE[$(route),C] follows CES demand from the tax-inclusive recycled-material price",
+        expr = _eeq(_evar(:RUSE, route, :C),
+            _emul(
+                _econst(bench.material_input[(:RMTL, route)]),
+                _ediv(_evar(:MEFF, route, :C), _econst(base_eff)),
+                _epow(_ediv(_evar(:P_MEFF_C, route), _evar(:P_MAT_C, :RMTL)),
+                    _econst(params.sigma_metal))))
+        _register_ast_equation!(ctx, block, :recycled_material_demand_c, expr;
+            info = "country C recycled material demand follows calibrated CES material substitution",
             indices = (route,))
     end
 
-    JuMP.@NLobjective(model, Max,
-        bench.utility_share[:BRD_M] * log(z[:BRD_M]) +
-        bench.utility_share[:BRD_C] * log(z[:BRD_C]) +
-        bench.utility_share[:TST_C] * log(z[:TST_C]))
-    JCGERuntime.register_equation!(ctx;
-        tag = :objective,
-        block = block.name,
-        payload = (
-            indices = (),
-            params = block.params,
-            info = "maximize two-country benchmark-weighted log utility under C fiscal closure",
-            expr = JCGECore.ERaw("two-country log utility objective with fiscal closure"),
-            constraint = nothing,
-        ))
+    return nothing
+end
+
+function JCGECore.build!(block::TwoCountryBlock{:objective},
+    ctx::JCGERuntime.KernelContext,
+    spec::JCGECore.RunSpec)
+    bench = block.benchmark
+    _require_two_country_model(ctx, block)
+
+    expr = _eadd(
+        _scaled(bench.utility_share[:BRD_M], _elog(_evar(:Z, :BRD_M))),
+        _scaled(bench.utility_share[:BRD_C], _elog(_evar(:Z, :BRD_C))),
+        _scaled(bench.utility_share[:TST_C], _elog(_evar(:Z, :TST_C))))
+    _register_ast_objective!(ctx, block, expr;
+        info = "two-country benchmark-weighted household utility objective under country C fiscal closure")
 
     return nothing
 end
@@ -463,12 +580,16 @@ function two_country_fiscal_model(; params = default_parameters(),
     institutions = collect(Symbol, (:HOH_M, :HOH_C, :GOV_C, :NFA))
     sets = JCGECore.Sets(commodities, activities, factors, institutions)
     mappings = JCGECore.Mappings(Dict(a => a for a in activities))
-    block = CircularTwoCountryFiscalOnePeriodBlock(:circular_two_country_fiscal_one_period,
-        params, benchmark, replicate_benchmark, policy)
+    blocks = _two_country_blocks(;
+        params = params,
+        benchmark = benchmark,
+        replicate_benchmark = replicate_benchmark,
+        policy = policy,
+        closure = :two_country_fiscal)
 
     allowed = JCGECore.allowed_sections()
     section_blocks = Dict(sym => Any[] for sym in allowed)
-    push!(section_blocks[:production], block)
+    append!(section_blocks[:production], blocks)
     sections = [JCGECore.section(sym, section_blocks[sym]) for sym in allowed]
 
     return JCGECore.build_spec(
@@ -488,7 +609,9 @@ two_country_fiscal_baseline(; kwargs...) = two_country_fiscal_model(; kwargs...)
 
 function _two_country_run_metadata(result)
     for eq in result.context.equations
-        if eq.tag == :metadata && eq.block === :circular_two_country_fiscal_one_period
+        if eq.tag == :metadata &&
+           haskey(eq.payload, :closure) &&
+           eq.payload.closure === :two_country_fiscal
             return eq.payload
         end
     end

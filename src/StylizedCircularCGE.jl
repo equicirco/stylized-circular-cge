@@ -50,6 +50,9 @@ export two_country_distributional_activity_summary, two_country_distributional_f
 export write_two_country_experiment_bundle
 
 include("single_country/core.jl")
+include("common/ast.jl")
+include("common/circular_policy.jl")
+include("single_country/blocks.jl")
 include("single_country/model.jl")
 include("single_country/scenarios.jl")
 include("single_country/results.jl")
@@ -57,6 +60,7 @@ include("single_country/analytics.jl")
 include("single_country/io.jl")
 
 include("two_country/core.jl")
+include("two_country/blocks.jl")
 include("two_country/model.jl")
 include("two_country/scenarios.jl")
 include("two_country/results.jl")
