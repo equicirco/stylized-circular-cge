@@ -6,6 +6,7 @@ the JCGE framework.
 module StylizedCircularCGE
 
 using Ipopt
+using JCGECalibrate
 using JCGECore
 using JCGERuntime
 using JuMP
@@ -19,6 +20,8 @@ export profile_experiment, product_profile_grid, product_parameter_grid
 export ExperimentSpec, with_parameter, parameter_grid, run_experiment, run_grid
 export policy_grid, parameter_policy_grid
 export experiment_execution_kwargs
+export CalibrationSet, load_calibration_set, default_calibration_set
+export calibration_parameters, calibration_stock0, calibration_value
 export accounts, default_parameters, synthetic_sam, sam_balance, synthetic_benchmark
 export model, baseline, fiscal_model, fiscal_baseline, decentralized_model, decentralized_baseline
 export scenario, solve
@@ -50,6 +53,8 @@ export two_country_distributional_activity_summary, two_country_distributional_f
 export write_two_country_experiment_bundle
 
 include("single_country/core.jl")
+include("two_country/core.jl")
+include("common/calibration.jl")
 include("common/ast.jl")
 include("common/circular_policy.jl")
 include("single_country/blocks.jl")
@@ -59,7 +64,6 @@ include("single_country/results.jl")
 include("single_country/analytics.jl")
 include("single_country/io.jl")
 
-include("two_country/core.jl")
 include("two_country/blocks.jl")
 include("two_country/model.jl")
 include("two_country/scenarios.jl")

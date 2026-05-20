@@ -43,61 +43,11 @@ The split encodes the first leakage structure:
 - `NFA` balances the benchmark current-account counterpart of the virgin-metal
   export income.
 """
-function two_country_sam()
-    values = Dict{Tuple{Symbol,Symbol},Float64}(
-        (row, col) => 0.0 for row in TWO_COUNTRY_ACCOUNTS for col in TWO_COUNTRY_ACCOUNTS
+function two_country_sam(calibration = default_calibration_set())
+    return (
+        accounts = TWO_COUNTRY_ACCOUNTS,
+        values = _sam_values(calibration.two_country_sam, TWO_COUNTRY_ACCOUNTS),
     )
-
-    values[(:BRD_M, :HOH_M)] = 25.0
-    values[(:BRD_C, :HOH_C)] = 175.0
-    values[(:TST_C, :HOH_C)] = 200.0
-
-    values[(:NEW_C, :TST_C)] = 100.0
-    values[(:REF_C, :TST_C)] = 40.0
-    values[(:REP_C, :TST_C)] = 30.0
-    values[(:REU_C, :TST_C)] = 30.0
-
-    values[(:VMTL_M, :NEW_C)] = 30.0
-    values[(:VMTL_M, :REF_C)] = 6.0
-    values[(:VMTL_M, :REP_C)] = 4.0
-
-    values[(:RMTL_C, :NEW_C)] = 10.0
-    values[(:RMTL_C, :REF_C)] = 4.0
-    values[(:RMTL_C, :REP_C)] = 1.0
-
-    values[(:EOL_C, :RMTL_C)] = 10.0
-    values[(:EOL_C, :REF_C)] = 10.0
-    values[(:EOL_C, :REP_C)] = 10.0
-    values[(:EOL_C, :REU_C)] = 20.0
-
-    values[(:LAB_M, :BRD_M)] = 15.0
-    values[(:CAP_M, :BRD_M)] = 10.0
-    values[(:LAB_M, :VMTL_M)] = 10.0
-    values[(:CAP_M, :VMTL_M)] = 30.0
-
-    values[(:LAB_C, :BRD_C)] = 108.0
-    values[(:CAP_C, :BRD_C)] = 67.0
-    values[(:LAB_C, :RMTL_C)] = 3.0
-    values[(:CAP_C, :RMTL_C)] = 2.0
-    values[(:LAB_C, :NEW_C)] = 30.0
-    values[(:CAP_C, :NEW_C)] = 30.0
-    values[(:LAB_C, :REF_C)] = 15.0
-    values[(:CAP_C, :REF_C)] = 5.0
-    values[(:LAB_C, :REP_C)] = 12.0
-    values[(:CAP_C, :REP_C)] = 3.0
-    values[(:LAB_C, :REU_C)] = 7.0
-    values[(:CAP_C, :REU_C)] = 3.0
-
-    values[(:HOH_M, :LAB_M)] = 25.0
-    values[(:HOH_M, :CAP_M)] = 40.0
-    values[(:NFA, :HOH_M)] = 40.0
-
-    values[(:HOH_C, :LAB_C)] = 175.0
-    values[(:HOH_C, :CAP_C)] = 110.0
-    values[(:HOH_C, :EOL_C)] = 50.0
-    values[(:HOH_C, :NFA)] = 40.0
-
-    return (accounts = TWO_COUNTRY_ACCOUNTS, values = values)
 end
 
 """
@@ -164,14 +114,17 @@ function _two_country_country(activity::Symbol)
 end
 
 """
-    two_country_benchmark(params=default_parameters(); stock0=200)
+    two_country_benchmark(params=default_parameters(); calibration=default_calibration_set())
 
 Return the calibrated benchmark used by the executable two-country extension.
 It preserves the same round-number technology and circular-economy quantities as
 the single-country benchmark while assigning activities to countries.
 """
-function two_country_benchmark(params = default_parameters(); stock0::Real = 200.0)
-    sam = two_country_sam()
+function two_country_benchmark(params = default_parameters();
+    stock0 = nothing,
+    calibration = default_calibration_set())
+    sam = two_country_sam(calibration)
+    stock = Float64(stock0 === nothing ? calibration_stock0(calibration) : stock0)
     sam_values = sam.values
     output = Dict(a => sum(sam_values[(a, col)] for col in sam.accounts)
         for a in (TWO_COUNTRY_PRODUCTION_ACTIVITIES..., :TST_C))
@@ -238,13 +191,13 @@ function two_country_benchmark(params = default_parameters(); stock0::Real = 200
         :REC => sam_values[(:EOL_C, :RMTL_C)],
         :INC => 0.0,
     )
-    target_retirement = params.delta * Float64(stock0)
+    target_retirement = params.delta * stock
     eol_scale = target_retirement / sum(values(raw_eol_allocation))
     eol_allocation = Dict(use => raw_eol_allocation[use] * eol_scale for use in EOL_USES)
     nfa_transfer = sam_values[(:HOH_C, :NFA)]
 
     return (
-        stock0 = Float64(stock0),
+        stock0 = stock,
         output = output,
         factor_endowment = factor_endowment,
         factor_input = factor_input,

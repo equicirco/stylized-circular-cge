@@ -567,8 +567,9 @@ function JCGECore.build!(block::TwoCountryBlock{:objective},
     return nothing
 end
 
-function two_country_fiscal_model(; params = default_parameters(),
-    benchmark = two_country_benchmark(params),
+function two_country_fiscal_model(; calibration = default_calibration_set(),
+    params = default_parameters(; calibration = calibration),
+    benchmark = two_country_benchmark(params; calibration = calibration),
     name::String = "StylizedCircularCGETwoCountryFiscal",
     scenario_spec::JCGECore.ScenarioSpec = scenario(:baseline),
     replicate_benchmark::Bool = false,

@@ -7,6 +7,8 @@ The benchmark data use round values by design. They are intended to make model
 logic and parameter experiments easy to inspect, not to represent an empirical
 economy.
 
+- `round_number_parameters.csv`: scalar stock, elasticity, yield, quality, and
+  material-intensity parameters for the default calibration set.
 - `synthetic_sam.csv`: single-country benchmark SAM.
 - `two_country_synthetic_sam.csv`: two-country benchmark SAM matching the
   initial mining-country / consuming-country accounting split.

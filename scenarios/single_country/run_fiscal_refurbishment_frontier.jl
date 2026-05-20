@@ -17,8 +17,35 @@ specs = parameter_policy_grid(;
 )
 
 results = run_grid(specs; closure = :fiscal, execution_kwargs...)
-assert_closed_economy_results(results)
-comparison = compare_to_group_reference(results, group_fields;
+
+const MARKET_TOL = 1.0e-5
+
+function group_key(row, fields)
+    return Tuple(getproperty(row, field) for field in fields)
+end
+
+function is_valid_result_row(row)
+    return string(row.status) == "LOCALLY_SOLVED" &&
+           row.closure === :fiscal &&
+           row.max_abs_market_residual <= MARKET_TOL
+end
+
+function comparable_records(records, fields; reference_filter)
+    valid_pairs = [
+        (record = record, row = result_row(record))
+        for record in records
+        if is_valid_result_row(result_row(record))
+    ]
+    reference_keys = Set(group_key(pair.row, fields) for pair in valid_pairs if reference_filter(pair.row))
+    return [pair.record for pair in valid_pairs if group_key(pair.row, fields) in reference_keys]
+end
+
+raw_rows = result_rows(results)
+invalid_rows = [row for row in raw_rows if !is_valid_result_row(row)]
+comparable = comparable_records(results, group_fields;
+    reference_filter = row -> row.tau_route_ref == 0.0)
+
+comparison = compare_to_group_reference(comparable, group_fields;
     reference_filter = row -> row.tau_route_ref == 0.0)
 summary = summarize_comparison(comparison)
 sensitivity = sensitivity_screen(comparison, :pct_virgin_use,
@@ -35,7 +62,7 @@ support_frontier_with_rebound = frontier_rows(comparison;
     predicate = row -> row.tau_route_ref < 0.0 && row.material_saving,
     sense = :absolute_min)
 
-write_rows_csv(joinpath(output_dir, "fiscal_refurbishment_frontier.csv"), result_rows(results))
+write_rows_csv(joinpath(output_dir, "fiscal_refurbishment_frontier.csv"), raw_rows)
 write_rows_csv(joinpath(output_dir, "fiscal_refurbishment_frontier_comparison.csv"), comparison)
 write_rows_csv(joinpath(output_dir, "fiscal_refurbishment_frontier_summary.csv"), [summary_row(summary)])
 write_rows_csv(joinpath(output_dir, "fiscal_refurbishment_frontier_sensitivity.csv"), sensitivity)
@@ -49,6 +76,7 @@ if !isempty(support_frontier_with_rebound)
 end
 
 println("Ran $(length(results)) fiscal refurbishment-frontier experiments")
+println("Valid comparable experiments: $(length(comparable)); invalid/non-closing rows: $(length(invalid_rows))")
 println("Compared each policy row against the zero-policy row with matching parameters")
 println("Regimes: $(summary.regimes)")
 println("Sensitivity screen for pct_virgin_use:")

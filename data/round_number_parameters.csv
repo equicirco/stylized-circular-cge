@@ -1,0 +1,16 @@
+label,value,description
+stock0,200.0,Opening durable toaster stock
+delta,0.25,Retirement rate used to compute the end-of-life flow
+metal_quality,0.85,Effective-quality weight of recycled material
+sigma_metal,2.0,Substitution elasticity between virgin and recycled material
+sigma_routes,2.0,Substitution elasticity between product-service routes
+sigma_eol,2.0,Elasticity of end-of-life allocation across uses
+eta_service,1.0,Price elasticity of toaster-service demand
+yield_ref,4.0,Refurbishment route output per end-of-life unit
+yield_rep,3.0,Repair route output per end-of-life unit
+yield_reu,1.5,Reuse route output per end-of-life unit
+yield_rmtl,1.5,Recycled material output per recycling end-of-life unit
+metal_intensity_new,0.40,Effective metal requirement per new route unit
+metal_intensity_ref,0.25,Effective metal requirement per refurbishment route unit
+metal_intensity_rep,0.16666666666666666,Effective metal requirement per repair route unit
+metal_intensity_reu,0.0,Effective metal requirement per reuse route unit

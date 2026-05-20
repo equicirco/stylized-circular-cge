@@ -79,9 +79,10 @@ struct ExperimentSpec
 end
 
 ExperimentSpec(label::AbstractString;
-    params = default_parameters(),
+    calibration = default_calibration_set(),
+    params = default_parameters(; calibration = calibration),
     policy::PolicyWedges = zero_policy(),
-    benchmark = synthetic_benchmark(params)) =
+    benchmark = synthetic_benchmark(params; calibration = calibration)) =
     ExperimentSpec(String(label), params, policy, benchmark)
 
 function _replace_namedtuple(nt::NamedTuple, key::Symbol, value)
@@ -121,13 +122,14 @@ function _set_parameters(params::NamedTuple, assignments)
 end
 
 """
-    parameter_grid(; base_params=default_parameters(), policy=zero_policy(), kwargs...)
+    parameter_grid(; calibration=default_calibration_set(), policy=zero_policy(), kwargs...)
 
 Create local experiment specs from keyword vectors, e.g.
 `parameter_grid(sigma_routes=[1.2, 2.0], metal_quality=[0.75, 0.9])`.
 """
-function parameter_grid(; base_params = default_parameters(),
-    base_benchmark = synthetic_benchmark(base_params),
+function parameter_grid(; calibration = default_calibration_set(),
+    base_params = default_parameters(; calibration = calibration),
+    base_benchmark = synthetic_benchmark(base_params; calibration = calibration),
     policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "grid",
     kwargs...)
@@ -135,24 +137,27 @@ function parameter_grid(; base_params = default_parameters(),
     return RuntimeExperiments.parameter_grid(; prefix = prefix, kwargs...) do label, a
         params = _set_parameters(base_params, a)
         ExperimentSpec(label;
+            calibration = calibration,
             params = params,
             policy = policy,
-            benchmark = synthetic_benchmark(params; stock0 = stock0))
+            benchmark = synthetic_benchmark(params; stock0 = stock0, calibration = calibration))
     end
 end
 
 """
-    policy_grid(kind, target, taus; params=default_parameters(), base_policy=zero_policy())
+    policy_grid(kind, target, taus; calibration=default_calibration_set(), base_policy=zero_policy())
 
 Create experiment specs that vary one comparable ad-valorem policy wedge.
 """
 function policy_grid(kind::Symbol, target::Symbol, taus;
-    params = default_parameters(),
-    benchmark = synthetic_benchmark(params),
+    calibration = default_calibration_set(),
+    params = default_parameters(; calibration = calibration),
+    benchmark = synthetic_benchmark(params; calibration = calibration),
     base_policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "policy")
     return RuntimeExperiments.policy_grid(kind, target, taus; prefix = prefix) do label, k, t, tau
         ExperimentSpec(label;
+            calibration = calibration,
             params = params,
             policy = with_wedge(base_policy, k, t, tau),
             benchmark = benchmark)
@@ -168,8 +173,9 @@ policy wedge sequence.
 function parameter_policy_grid(; policy_kind::Symbol,
     policy_target::Symbol,
     tau,
-    base_params = default_parameters(),
-    base_benchmark = synthetic_benchmark(base_params),
+    calibration = default_calibration_set(),
+    base_params = default_parameters(; calibration = calibration),
+    base_benchmark = synthetic_benchmark(base_params; calibration = calibration),
     base_policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "grid",
     kwargs...)
@@ -183,9 +189,10 @@ function parameter_policy_grid(; policy_kind::Symbol,
         params = _set_parameters(base_params, a)
         policy = with_wedge(base_policy, kind, target, tau_value)
         ExperimentSpec(label;
+            calibration = calibration,
             params = params,
             policy = policy,
-            benchmark = synthetic_benchmark(params; stock0 = stock0))
+            benchmark = synthetic_benchmark(params; stock0 = stock0, calibration = calibration))
     end
 end
 
@@ -208,32 +215,11 @@ end
 """
     default_parameters()
 
-Return neutral starting values for the core theoretical parameters. These are
-placeholders for model development and parameter-space exploration, not
-empirical estimates.
+Return the core theoretical parameters from a calibration set. The default
+calibration is intentionally stylized and is not an empirical estimate.
 """
-function default_parameters()
-    return (
-        delta = 0.25,
-        metal_quality = 0.85,
-        sigma_metal = 2.0,
-        sigma_routes = 2.0,
-        sigma_eol = 2.0,
-        eta_service = 1.0,
-        yield = (
-            ref = 4.0,
-            rep = 3.0,
-            reu = 1.5,
-            rmtl = 1.5,
-        ),
-        metal_intensity = (
-            new = 0.40,
-            ref = 0.25,
-            rep = 1.0 / 6.0,
-            reu = 0.00,
-        ),
-    )
-end
+default_parameters(; calibration = default_calibration_set()) =
+    calibration_parameters(calibration)
 
 """
 Structured mapping from a stylized product interpretation to model parameters.
@@ -260,18 +246,21 @@ function _profile_tuple(values::NamedTuple, keys, what::AbstractString)
 end
 
 function ProductProfile(label::AbstractString;
-    stock0::Real = 200.0,
-    delta::Real = default_parameters().delta,
-    metal_quality::Real = default_parameters().metal_quality,
-    yield::NamedTuple = default_parameters().yield,
-    metal_intensity::NamedTuple = default_parameters().metal_intensity)
+    calibration = default_calibration_set(),
+    stock0 = nothing,
+    delta = nothing,
+    metal_quality = nothing,
+    yield::Union{Nothing,NamedTuple} = nothing,
+    metal_intensity::Union{Nothing,NamedTuple} = nothing)
+    params = default_parameters(; calibration = calibration)
     return ProductProfile(
         String(label),
-        Float64(stock0),
-        Float64(delta),
-        Float64(metal_quality),
-        _profile_tuple(yield, PROFILE_YIELD_KEYS, "yield"),
-        _profile_tuple(metal_intensity, PROFILE_METAL_INTENSITY_KEYS, "metal intensity"),
+        Float64(stock0 === nothing ? calibration_stock0(calibration) : stock0),
+        Float64(delta === nothing ? params.delta : delta),
+        Float64(metal_quality === nothing ? params.metal_quality : metal_quality),
+        _profile_tuple(yield === nothing ? params.yield : yield, PROFILE_YIELD_KEYS, "yield"),
+        _profile_tuple(metal_intensity === nothing ? params.metal_intensity : metal_intensity,
+            PROFILE_METAL_INTENSITY_KEYS, "metal intensity"),
     )
 end
 
@@ -280,7 +269,8 @@ end
 
 Return the round-number toaster-service profile used by the synthetic benchmark.
 """
-default_product_profile() = ProductProfile("round-number-toaster")
+default_product_profile(; calibration = default_calibration_set()) =
+    ProductProfile("round-number-toaster"; calibration = calibration)
 
 """
     profile_parameters(profile; base_params=default_parameters())
@@ -299,55 +289,11 @@ end
 """
     synthetic_sam()
 
-Return a round-number SAM for calibration experiments. A cell `(row, column)` is
-a payment from the column account to the row account.
+Return the single-country SAM loaded from a calibration set. A cell
+`(row, column)` is a payment from the column account to the row account.
 """
-function synthetic_sam()
-    values = Dict{Tuple{Symbol,Symbol},Float64}(
-        (row, col) => 0.0 for row in SAM_ACCOUNTS for col in SAM_ACCOUNTS
-    )
-
-    values[(:BRD, :HOH)] = 200.0
-    values[(:TST, :HOH)] = 200.0
-
-    values[(:NEW, :TST)] = 100.0
-    values[(:REF, :TST)] = 40.0
-    values[(:REP, :TST)] = 30.0
-    values[(:REU, :TST)] = 30.0
-
-    values[(:VMTL, :NEW)] = 30.0
-    values[(:VMTL, :REF)] = 6.0
-    values[(:VMTL, :REP)] = 4.0
-
-    values[(:RMTL, :NEW)] = 10.0
-    values[(:RMTL, :REF)] = 4.0
-    values[(:RMTL, :REP)] = 1.0
-
-    values[(:EOL, :RMTL)] = 10.0
-    values[(:EOL, :REF)] = 10.0
-    values[(:EOL, :REP)] = 10.0
-    values[(:EOL, :REU)] = 20.0
-
-    values[(:LAB, :BRD)] = 123.0
-    values[(:CAP, :BRD)] = 77.0
-    values[(:LAB, :VMTL)] = 10.0
-    values[(:CAP, :VMTL)] = 30.0
-    values[(:LAB, :RMTL)] = 3.0
-    values[(:CAP, :RMTL)] = 2.0
-    values[(:LAB, :NEW)] = 30.0
-    values[(:CAP, :NEW)] = 30.0
-    values[(:LAB, :REF)] = 15.0
-    values[(:CAP, :REF)] = 5.0
-    values[(:LAB, :REP)] = 12.0
-    values[(:CAP, :REP)] = 3.0
-    values[(:LAB, :REU)] = 7.0
-    values[(:CAP, :REU)] = 3.0
-
-    values[(:HOH, :LAB)] = 200.0
-    values[(:HOH, :CAP)] = 150.0
-    values[(:HOH, :EOL)] = 50.0
-
-    return (accounts = SAM_ACCOUNTS, values = values)
+function synthetic_sam(calibration = default_calibration_set())
+    return (accounts = SAM_ACCOUNTS, values = _sam_values(calibration.single_sam, SAM_ACCOUNTS))
 end
 
 """
@@ -374,9 +320,9 @@ end
 """
     synthetic_benchmark()
 
-Return a small synthetic benchmark used by the first executable model. The
-values are intentionally stylized and should be read as calibration scaffolding,
-not empirical data.
+Return the single-country benchmark calibrated from the selected calibration
+set. The default values are intentionally stylized and should not be read as
+empirical data.
 """
 function _ces_quantity(inputs::Dict{Symbol,Float64}, shares::Dict{Symbol,Float64},
     sigma::Real; quality::Dict{Symbol,Float64}=Dict(k => 1.0 for k in keys(inputs)))
@@ -387,8 +333,11 @@ function _ces_quantity(inputs::Dict{Symbol,Float64}, shares::Dict{Symbol,Float64
     return sum(shares[k] * (quality[k] * inputs[k]) ^ rho for k in keys(inputs)) ^ (1.0 / rho)
 end
 
-function synthetic_benchmark(params = default_parameters(); stock0::Real = 200.0)
-    sam = synthetic_sam()
+function synthetic_benchmark(params = default_parameters();
+    stock0 = nothing,
+    calibration = default_calibration_set())
+    sam = synthetic_sam(calibration)
+    stock = Float64(stock0 === nothing ? calibration_stock0(calibration) : stock0)
     sam_values = sam.values
     output = Dict(a => sum(sam_values[(a, col)] for col in sam.accounts)
         for a in (PRODUCTION_ACTIVITIES..., :TST))
@@ -443,12 +392,12 @@ function synthetic_benchmark(params = default_parameters(); stock0::Real = 200.0
         :REC => sam_values[(:EOL, :RMTL)],
         :INC => sam_values[(:EOL, :INC)],
     )
-    target_retirement = params.delta * Float64(stock0)
+    target_retirement = params.delta * stock
     eol_scale = target_retirement / sum(values(raw_eol_allocation))
     eol_allocation = Dict(use => raw_eol_allocation[use] * eol_scale for use in EOL_USES)
 
     return (
-        stock0 = Float64(stock0),
+        stock0 = stock,
         output = output,
         factor_endowment = factor_endowment,
         factor_input = factor_input,
@@ -471,9 +420,9 @@ end
 Return a benchmark calibrated from the synthetic SAM while preserving the
 profile's opening stock and retirement-rate assumptions.
 """
-function profile_benchmark(profile::ProductProfile)
-    params = profile_parameters(profile)
-    return synthetic_benchmark(params; stock0 = profile.stock0)
+function profile_benchmark(profile::ProductProfile; calibration = default_calibration_set())
+    params = profile_parameters(profile; base_params = default_parameters(; calibration = calibration))
+    return synthetic_benchmark(params; stock0 = profile.stock0, calibration = calibration)
 end
 
 """
@@ -483,12 +432,14 @@ Create an experiment spec from a product profile.
 """
 function profile_experiment(label::AbstractString,
     profile::ProductProfile;
+    calibration = default_calibration_set(),
     policy::PolicyWedges = zero_policy())
-    params = profile_parameters(profile)
+    params = profile_parameters(profile; base_params = default_parameters(; calibration = calibration))
     return ExperimentSpec(label;
+        calibration = calibration,
         params = params,
         policy = policy,
-        benchmark = profile_benchmark(profile))
+        benchmark = profile_benchmark(profile; calibration = calibration))
 end
 
 """
@@ -497,10 +448,13 @@ end
 Create one experiment spec per product profile.
 """
 function product_profile_grid(profiles::AbstractVector{<:ProductProfile};
+    calibration = default_calibration_set(),
     policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "profile")
     return [
-        profile_experiment("$(prefix):$(profile.label)", profile; policy = policy)
+        profile_experiment("$(prefix):$(profile.label)", profile;
+            calibration = calibration,
+            policy = policy)
         for profile in profiles
     ]
 end
@@ -511,12 +465,14 @@ end
 Create parameter-grid experiments anchored on one product profile.
 """
 function product_parameter_grid(profile::ProductProfile;
+    calibration = default_calibration_set(),
     policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "profile-grid",
     kwargs...)
     return parameter_grid(;
-        base_params = profile_parameters(profile),
-        base_benchmark = profile_benchmark(profile),
+        calibration = calibration,
+        base_params = profile_parameters(profile; base_params = default_parameters(; calibration = calibration)),
+        base_benchmark = profile_benchmark(profile; calibration = calibration),
         policy = policy,
         prefix = "$(prefix):$(profile.label)",
         kwargs...)

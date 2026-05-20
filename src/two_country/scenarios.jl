@@ -6,10 +6,15 @@ same `ExperimentSpec` container as the single-country model, but calibrates the
 benchmark with `two_country_benchmark`.
 """
 function two_country_experiment(label::AbstractString;
-    params = default_parameters(),
+    calibration = default_calibration_set(),
+    params = default_parameters(; calibration = calibration),
     policy::PolicyWedges = zero_policy(),
-    benchmark = two_country_benchmark(params))
-    return ExperimentSpec(label; params = params, policy = policy, benchmark = benchmark)
+    benchmark = two_country_benchmark(params; calibration = calibration))
+    return ExperimentSpec(label;
+        calibration = calibration,
+        params = params,
+        policy = policy,
+        benchmark = benchmark)
 end
 
 """
@@ -18,8 +23,9 @@ end
 Create two-country experiment specs from the same parameter-grid syntax used by
 `parameter_grid`.
 """
-function two_country_parameter_grid(; base_params = default_parameters(),
-    base_benchmark = two_country_benchmark(base_params),
+function two_country_parameter_grid(; calibration = default_calibration_set(),
+    base_params = default_parameters(; calibration = calibration),
+    base_benchmark = two_country_benchmark(base_params; calibration = calibration),
     policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "two_country_grid",
     kwargs...)
@@ -27,9 +33,10 @@ function two_country_parameter_grid(; base_params = default_parameters(),
     return RuntimeExperiments.parameter_grid(; prefix = prefix, kwargs...) do label, a
         params = _set_parameters(base_params, a)
         ExperimentSpec(label;
+            calibration = calibration,
             params = params,
             policy = policy,
-            benchmark = two_country_benchmark(params; stock0 = stock0))
+            benchmark = two_country_benchmark(params; stock0 = stock0, calibration = calibration))
     end
 end
 
@@ -39,12 +46,14 @@ end
 Create two-country experiments that vary one comparable policy wedge.
 """
 function two_country_policy_grid(kind::Symbol, target::Symbol, taus;
-    params = default_parameters(),
-    benchmark = two_country_benchmark(params),
+    calibration = default_calibration_set(),
+    params = default_parameters(; calibration = calibration),
+    benchmark = two_country_benchmark(params; calibration = calibration),
     base_policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "two_country_policy")
     return RuntimeExperiments.policy_grid(kind, target, taus; prefix = prefix) do label, k, t, tau
         ExperimentSpec(label;
+            calibration = calibration,
             params = params,
             policy = with_wedge(base_policy, k, t, tau),
             benchmark = benchmark)
@@ -59,8 +68,9 @@ Create two-country experiments for all parameter and one-policy combinations.
 function two_country_parameter_policy_grid(; policy_kind::Symbol,
     policy_target::Symbol,
     tau,
-    base_params = default_parameters(),
-    base_benchmark = two_country_benchmark(base_params),
+    calibration = default_calibration_set(),
+    base_params = default_parameters(; calibration = calibration),
+    base_benchmark = two_country_benchmark(base_params; calibration = calibration),
     base_policy::PolicyWedges = zero_policy(),
     prefix::AbstractString = "two_country_grid",
     kwargs...)
@@ -74,9 +84,10 @@ function two_country_parameter_policy_grid(; policy_kind::Symbol,
         params = _set_parameters(base_params, a)
         policy = with_wedge(base_policy, kind, target, tau_value)
         ExperimentSpec(label;
+            calibration = calibration,
             params = params,
             policy = policy,
-            benchmark = two_country_benchmark(params; stock0 = stock0))
+            benchmark = two_country_benchmark(params; stock0 = stock0, calibration = calibration))
     end
 end
 

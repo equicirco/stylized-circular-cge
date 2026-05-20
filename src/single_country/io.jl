@@ -31,10 +31,3 @@ function write_experiment_bundle(output_dir::AbstractString,
         summary = summary_path,
     )
 end
-
-"""
-    datadir()
-
-Return the package data directory.
-"""
-datadir() = normpath(joinpath(@__DIR__, "..", "..", "data"))

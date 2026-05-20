@@ -599,12 +599,13 @@ function JCGECore.build!(block::SingleCountryBlock{:objective},
 end
 
 """
-    model(; params=default_parameters(), benchmark=synthetic_benchmark(params), name="StylizedCircularCGE")
+    model(; calibration=default_calibration_set(), name="StylizedCircularCGE")
 
 Return the first one-period JCGE RunSpec for the stylized circular economy.
 """
-function model(; params = default_parameters(),
-    benchmark = synthetic_benchmark(params),
+function model(; calibration = default_calibration_set(),
+    params = default_parameters(; calibration = calibration),
+    benchmark = synthetic_benchmark(params; calibration = calibration),
     name::String = "StylizedCircularCGE",
     scenario_spec::JCGECore.ScenarioSpec = scenario(:baseline),
     replicate_benchmark::Bool = false,
@@ -646,14 +647,15 @@ Return the planner-form baseline RunSpec.
 baseline(; kwargs...) = model(; kwargs...)
 
 """
-    fiscal_model(; params=default_parameters(), benchmark=synthetic_benchmark(params), policy=zero_policy())
+    fiscal_model(; calibration=default_calibration_set(), policy=zero_policy())
 
 Return the one-period fiscal-closure RunSpec. This variant keeps the physical
 circular constraints but interprets policy wedges as tax/subsidy instruments with
 household income, purchaser prices, and government net revenue.
 """
-function fiscal_model(; params = default_parameters(),
-    benchmark = synthetic_benchmark(params),
+function fiscal_model(; calibration = default_calibration_set(),
+    params = default_parameters(; calibration = calibration),
+    benchmark = synthetic_benchmark(params; calibration = calibration),
     name::String = "StylizedCircularCGEFiscal",
     scenario_spec::JCGECore.ScenarioSpec = scenario(:baseline),
     replicate_benchmark::Bool = false,

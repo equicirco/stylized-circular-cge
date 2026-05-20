@@ -36,6 +36,18 @@ end
     @test p.metal_intensity.new > p.metal_intensity.ref > p.metal_intensity.rep >= p.metal_intensity.reu
 end
 
+@testset "calibration set" begin
+    calibration = default_calibration_set()
+    @test calibration.name === :round_number
+    @test calibration_stock0(calibration) == calibration_value(calibration, :stock0)
+    @test calibration_value(calibration, :delta) == calibration_parameters(calibration).delta
+    @test default_parameters(; calibration = calibration) == default_parameters()
+    @test synthetic_sam(calibration).values[(:NEW, :TST)] ==
+          calibration.single_sam.sam[:NEW, :TST]
+    @test two_country_sam(calibration).values[(:NEW_C, :TST_C)] ==
+          calibration.two_country_sam.sam[:NEW_C, :TST_C]
+end
+
 @testset "product profiles" begin
     profile = default_product_profile()
     params = profile_parameters(profile)
