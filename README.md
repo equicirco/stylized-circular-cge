@@ -79,6 +79,7 @@ Use the scenario paths directly:
 julia --project=. scenarios/single_country/run_default_grid.jl
 julia --project=. scenarios/single_country/run_fiscal_strategy_comparison.jl
 julia --project=. scenarios/single_country/run_fiscal_parameter_regions.jl
+julia --project=. scenarios/single_country/run_nested_eol_policy_regions.jl
 julia --project=. scenarios/two_country/run_fiscal_parameter_regions.jl
 ```
 
@@ -97,6 +98,7 @@ directory.
 
 ```bash
 julia --project=. analytics/single_country/analyze_policy_regions.jl
+julia --project=. analytics/single_country/analyze_nested_eol_policy_regions.jl
 julia --project=. analytics/two_country/analyze_policy_regions.jl
 julia --project=. analytics/cross_model/compare_single_two_country.jl
 ```
