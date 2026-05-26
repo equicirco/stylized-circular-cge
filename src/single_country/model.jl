@@ -161,7 +161,7 @@ function JCGECore.build!(block::SingleCountryBlock{:material},
         alpha = _metal_intensity(params, route)
         expr = _ele(_scaled(alpha, _evar(:Z, route)), _evar(:MEFF, route))
         _register_ast_equation!(ctx, block, :route_material_requirement, expr;
-            info = "material-using route output requires effective metal input",
+            info = "material-using route output requires a metal input composite",
             indices = (route,))
     end
 
@@ -187,7 +187,7 @@ function JCGECore.build!(block::SingleCountryBlock{:material},
         end
         expr = _ele(_evar(:MEFF, route), rhs)
         _register_ast_equation!(ctx, block, :metal_composite, expr;
-            info = "effective metal input is limited by the calibrated virgin-recycled material composite",
+            info = "metal input composite is limited by the calibrated virgin-recycled material composite",
             indices = (route,))
     end
 
@@ -383,7 +383,7 @@ function JCGECore.build!(block::SingleCountryBlock{:price},
                     _econst(1.0 / (1.0 - params.sigma_metal))))
         end
         _register_ast_equation!(ctx, block, :metal_price_index, expr;
-            info = "effective metal price is the calibrated CES material price index",
+            info = "metal input composite price is the calibrated CES material price index",
             indices = (route,))
     end
 
