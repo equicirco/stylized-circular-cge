@@ -106,9 +106,9 @@ function write_notes(path, run_summary, family_summary, within_summary,
         println(io)
         println(io, "## Interpretation")
         println(io)
-        println(io, "The nested analysis separates two questions. The first is whether the life-extension family is a viable material-saving strategy relative to linear virgin-metal taxation and recycling support. The second is which life-extension route drives that result. In this grid, life-extension availability is not equivalent to refurbishment availability: reuse and ties across routes explain a large share of the family-level result. Recycling remains conceptually distinct because it acts through virgin--recycled metal substitution rather than product-service route substitution.")
+        println(io, "The nested analysis separates two questions. The first is whether the life-extension family is a viable material-saving strategy relative to linear virgin-metal taxation and recycling support. The second is which life-extension route drives that result. In this route-sensitive design, comparable route-specific quantities use common explored ranges, so route rankings are not driven by assigning a wider or higher yield range to one route. Life-extension availability is still not equivalent to refurbishment availability: reuse and ties across routes explain a large share of the family-level result. Recycling remains conceptually distinct because it acts through virgin--recycled metal substitution rather than product-service route substitution.")
         println(io)
-        println(io, "These statements are conditional on the selected grid mode. The route grid is the appropriate mode when the question is how route-specific yields and metal intensities change the within-family ranking.")
+        println(io, "These statements are conditional on the selected grid mode. The route grid is the appropriate mode when the question is how comparable route-yield and metal-intensity ranges affect the within-family ranking.")
     end
 end
 

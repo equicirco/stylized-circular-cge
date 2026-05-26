@@ -9,6 +9,8 @@ const TAX_TAU = [0.0, 0.10, 0.25, 0.50]
 const SUPPORT_TAU = [-0.50, -0.25, -0.10, 0.0]
 const SUPPORT_TOL = 1.0e-10
 const LIFE_EXTENSION_ROUTES = (:REF, :REP, :REU)
+const ROUTE_METAL_INTENSITY_LEVELS = [0.15, 0.35]
+const ROUTE_YIELD_LEVELS = [3.0, 5.0]
 const LIFE_EXTENSION_STRATEGIES = Dict(
     :REF => :refurbishment_support,
     :REP => :repair_support,
@@ -36,11 +38,11 @@ function nested_eol_grid(mode::AbstractString)
             sigma_eol = [0.5, 4.0],
             eta_service = [0.5, 1.5],
             metal_quality = [0.75, 0.95],
-            metal_intensity_ref = [0.15, 0.35],
-            metal_intensity_rep = [0.10, 0.25],
-            yield_ref = [3.0, 5.0],
-            yield_rep = [2.0, 4.0],
-            yield_reu = [1.0, 2.0],
+            metal_intensity_ref = ROUTE_METAL_INTENSITY_LEVELS,
+            metal_intensity_rep = ROUTE_METAL_INTENSITY_LEVELS,
+            yield_ref = ROUTE_YIELD_LEVELS,
+            yield_rep = ROUTE_YIELD_LEVELS,
+            yield_reu = ROUTE_YIELD_LEVELS,
         )
     else
         error("Unknown JCGE_NESTED_EOL_GRID=$(mode). Use screen or route.")
