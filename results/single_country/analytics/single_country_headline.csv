@@ -1,0 +1,17 @@
+metric,count,share
+parameter_groups,2187,1.0
+complete_region_groups,2032,0.9291266575217193
+partial_or_missing_region_groups,155,0.07087334247828075
+tax_threshold_groups,882,0.40329218106995884
+refurbishment_threshold_groups,841,0.38454503886602653
+recycling_threshold_groups,146,0.06675811614083219
+support_efficiency_candidate_groups,959,0.43850022862368543
+support_efficiency_refurbishment_best,841,0.8769551616266945
+support_efficiency_recycling_best,118,0.12304483837330553
+region_all_available,11,0.005029721079103796
+region_none_available,733,0.3351623228166438
+region_refurbishment_support_and_recycling_support,17,0.007773205304069501
+region_refurbishment_support_only,555,0.25377229080932784
+region_virgin_material_tax_and_recycling_support,118,0.053955189757658895
+region_virgin_material_tax_and_refurbishment_support,258,0.11796982167352538
+region_virgin_material_tax_only,495,0.22633744855967078

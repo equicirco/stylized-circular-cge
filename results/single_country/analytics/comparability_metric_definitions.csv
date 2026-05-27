@@ -1,0 +1,6 @@
+metric,applies_to,role,interpretation
+virgin_saving_per_support_dollar,refurbishment_support; recycling_support,primary support-efficiency metric,material saving per unit of explicit subsidy outlay; compare together with service_loss_per_support_dollar
+virgin_saving_per_revenue_dollar,virgin_material_tax,primary tax-efficiency metric,material saving per unit of fiscal revenue; not directly equivalent to a subsidy cost without a revenue-use assumption
+virgin_saving_per_fiscal_cost_dollar,support instruments with net fiscal cost,cross-check for net-cost policies,"same numerator as support efficiency, with net government cost in the denominator"
+policy threshold without rebound,all instruments,cross-instrument availability metric,smallest tested policy magnitude that reduces virgin material use without increasing service demand
+service_loss_per_support_dollar,refurbishment_support; recycling_support,tradeoff diagnostic,service contraction per unit of subsidy outlay; used to distinguish circular substitution from demand contraction

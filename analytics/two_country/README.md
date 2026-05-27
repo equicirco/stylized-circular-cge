@@ -1,12 +1,12 @@
 # Two-Country Analytics
 
-Manuscript-oriented analysis scripts for the two-country branch live here.
+Analysis scripts for the two-country branch live here.
 
 - `analyze_policy_regions.jl`: reads the full-grid generated CSVs from
   `results/two_country/generated` and writes interpretation-oriented summaries
   under `results/two_country/analytics`.
 
-Transmission outputs currently persisted for manuscript review:
+Persisted transmission outputs:
 
 - `material_saving_transmission_set.csv`: all solved non-reference
   two-country comparisons with primary-material saving, keeping the C-side

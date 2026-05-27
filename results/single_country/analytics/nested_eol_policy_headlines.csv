@@ -1,0 +1,7 @@
+metric,value
+parameter_groups,1024.0
+life_extension_only_groups,348
+all_available_groups,88
+no_family_available_groups,35
+mean_family_life_extension_threshold,0.18040540540540526
+mean_recycling_threshold,0.10103448275862065

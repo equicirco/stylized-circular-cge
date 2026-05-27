@@ -3,9 +3,7 @@
 This repository contains code for stylized circular-economy CGE experiments
 built with the JCGE package stack.
 
-Modeling choices, interpretation, and manuscript text should live outside this
-README. This file only documents the repository layout and execution entry
-points.
+This file documents the repository layout and execution entry points.
 
 ## Repository Layout
 
@@ -15,16 +13,16 @@ points.
 - `src/two_country/`: executable two-country/leakage model branch.
 - `scenarios/single_country/`: scripts that run single-country scenario grids.
 - `scenarios/two_country/`: scripts that run two-country scenario grids.
-- `analytics/single_country/`: manuscript-oriented analysis scripts for
-  generated single-country results.
-- `analytics/two_country/`: manuscript-oriented analysis scripts for generated
-  two-country results.
+- `analytics/single_country/`: analysis scripts for generated single-country
+  results.
+- `analytics/two_country/`: analysis scripts for generated two-country results.
 - `analytics/cross_model/`: scripts comparing single-country and two-country
   outputs.
-- `results/single_country/`: generated single-country CSV outputs.
-- `results/two_country/`: generated two-country CSV outputs.
-- `results/cross_model/`: generated cross-model comparison outputs.
-- `results/article/`: separate manuscript workspace and bibliography material.
+- `results/single_country/`: single-country analytics outputs; raw generated
+  grids are reproducible and ignored.
+- `results/two_country/`: two-country analytics outputs; raw generated grids
+  are reproducible and ignored.
+- `results/cross_model/`: cross-model comparison analytics outputs.
 - `data/`: round-number synthetic calibration inputs.
 - `test/`: package tests.
 - `scripts/`: compatibility wrappers for scenario and analytics scripts.
