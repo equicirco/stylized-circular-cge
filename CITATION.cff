@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+title: StylizedCircularCGE - Stylized circular-economy computable general equilibrium model implemented with JCGE.
+message: >-
+  Please cite the archived software release of this repository and the JCGE
+  software ecosystem used to implement the model.
+type: software
+doi: 10.5281/zenodo.XXXXXXXX
+authors:
+  - given-names: Riccardo
+    family-names: Boero
+    email: ribo@nilu.no
+    orcid: 'https://orcid.org/0000-0002-7468-9096'
+    affiliation: NILU
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.XXXXXXXX
+    description: This DOI represents all software versions.
+repository-code: 'https://github.com/equicirco/stylized-circular-cge'
+abstract: >-
+  StylizedCircularCGE provides reproducible Julia code for stylized
+  circular-economy computable general equilibrium experiments. The repository
+  contains single-country and two-country model variants, scenario definitions,
+  numerical parameter-space runs, and compact analytics outputs for comparing
+  virgin-metal taxation, recycling support, and life-extension support
+  strategies.
+keywords:
+  - CE-RISE
+  - Open Source
+  - Open Science
+  - Circular Economy
+  - Computable General Equilibrium
+  - CGE
+  - Julia Language
+  - JCGE
+  - Policy Analysis
+  - Numerical Simulation
+license: EUPL-1.2

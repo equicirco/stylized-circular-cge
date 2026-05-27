@@ -5,6 +5,17 @@ built with the JCGE package stack.
 
 This file documents the repository layout and execution entry points.
 
+## License and Citation
+
+This repository is licensed under the European Union Public Licence v1.2
+(`EUPL-1.2`). It uses the JCGE software ecosystem, which is licensed separately
+under Apache-2.0.
+
+Citation metadata are provided in `CITATION.cff`. Zenodo release metadata are
+provided in `.zenodo.json` for archival in the CE-RISE community. This work
+received funding from the European Union under Grant Agreement No. 101092281 -
+CE-RISE.
+
 ## Repository Layout
 
 - `src/StylizedCircularCGE.jl`: package entry point and public exports.
