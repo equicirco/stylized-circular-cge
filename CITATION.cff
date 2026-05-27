@@ -5,7 +5,7 @@ message: >-
   including single-country and two-country model variants, scenario scripts,
   and compact analytics outputs.
 type: software
-doi: 10.5281/zenodo.XXXXXXXX
+doi: 10.5281/zenodo.20411478
 authors:
   - given-names: Riccardo
     family-names: Boero
@@ -14,7 +14,7 @@ authors:
     affiliation: NILU
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.XXXXXXXX
+    value: 10.5281/zenodo.20411478
     description: This DOI represents all software versions.
 repository-code: 'https://github.com/equicirco/stylized-circular-cge'
 abstract: >-
