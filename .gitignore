@@ -4,6 +4,8 @@ BASE.md
 *.jl.*.cov
 docs/build/
 results/
+!results/
+results/*
 !results/single_country/
 !results/single_country/.gitkeep
 results/single_country/*
@@ -12,4 +14,9 @@ results/single_country/*
 !results/two_country/.gitkeep
 results/two_country/*
 !results/two_country/.gitkeep
+!results/two_country/analytics/
+results/two_country/analytics/*
+!results/two_country/analytics/material_saving_transmission_set.csv
+!results/two_country/analytics/material_saving_transmission_summary.csv
+!results/two_country/analytics/material_saving_transmission_sign_patterns.csv
 outputs/

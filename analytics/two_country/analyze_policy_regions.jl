@@ -69,6 +69,18 @@ function finite_mean(rows, field::Symbol)
     return mean(values)
 end
 
+function finite_median(rows, field::Symbol)
+    values = finite_values(rows, field)
+    isempty(values) && return NaN
+    return median(values)
+end
+
+function finite_quantile(rows, field::Symbol, q::Real)
+    values = finite_values(rows, field)
+    isempty(values) && return NaN
+    return quantile(values, q)
+end
+
 function finite_min(rows, field::Symbol)
     values = finite_values(rows, field)
     isempty(values) && return NaN
@@ -442,6 +454,148 @@ const COUNTRY_FACTOR_SPECS = (
         field = :delta_activity_factor_reu_c, pct = :pct_activity_factor_reu_c),
 )
 
+const MATERIAL_SAVING_TRANSMISSION_SPECS = (
+    (side = :C, family = :material, component = :virgin_imports,
+        field = :delta_virgin_imports_c, pct = :pct_virgin_imports_c),
+    (side = :C, family = :material, component = :recycled_metal_output,
+        field = :delta_recycled_metal_c, pct = :pct_recycled_metal_c),
+    (side = :C, family = :material, component = :recycled_metal_use,
+        field = :delta_recycled_use_c, pct = :pct_recycled_use_c),
+    (side = :C, family = :eol_allocation, component = :recycling_share,
+        field = :delta_rec_share, pct = nothing),
+    (side = :C, family = :eol_allocation, component = :refurbishment_share,
+        field = :delta_ref_share, pct = nothing),
+    (side = :C, family = :activity, component = :new_production,
+        field = :delta_activity_new_c, pct = :pct_activity_new_c),
+    (side = :C, family = :activity, component = :refurbishment,
+        field = :delta_activity_ref_c, pct = :pct_activity_ref_c),
+    (side = :C, family = :activity, component = :repair,
+        field = :delta_activity_rep_c, pct = :pct_activity_rep_c),
+    (side = :C, family = :activity, component = :reuse,
+        field = :delta_activity_reu_c, pct = :pct_activity_reu_c),
+    (side = :C, family = :service, component = :toaster_service,
+        field = :delta_toaster_service, pct = :pct_toaster_service),
+    (side = :M, family = :material, component = :virgin_metal_output,
+        field = :delta_virgin_metal_m, pct = :pct_virgin_metal_m),
+    (side = :M, family = :activity, component = :virgin_metal_activity,
+        field = :delta_activity_vmtl_m, pct = :pct_activity_vmtl_m),
+    (side = :M, family = :factor, component = :total_factor_use,
+        field = :delta_factor_m_total, pct = :pct_factor_m_total),
+    (side = :M, family = :factor, component = :virgin_metal_factor_use,
+        field = :delta_activity_factor_vmtl_m, pct = :pct_activity_factor_vmtl_m),
+)
+
+function material_saving_rows(rows)
+    return [
+        row for row in rows
+        if as_string(row.status) == "LOCALLY_SOLVED" &&
+           abs(as_float(row.policy_value)) > 1.0e-12 &&
+           as_bool(row.material_saving)
+    ]
+end
+
+function material_saving_transmission_set(rows)
+    out = NamedTuple[]
+    for row in material_saving_rows(rows)
+        push!(out, (
+            strategy = as_string(row.strategy),
+            policy_field = as_string(row.policy_field),
+            policy_value = as_float(row.policy_value),
+            sigma_routes = as_float(row.sigma_routes),
+            sigma_metal = as_float(row.sigma_metal),
+            sigma_eol = as_float(row.sigma_eol),
+            eta_service = as_float(row.eta_service),
+            metal_quality = as_float(row.metal_quality),
+            metal_intensity_ref = as_float(row.metal_intensity_ref),
+            yield_ref = as_float(row.yield_ref),
+            pct_virgin_imports_c = as_float(row.pct_virgin_imports_c),
+            pct_recycled_metal_c = as_float(row.pct_recycled_metal_c),
+            delta_rec_share = as_float(row.delta_rec_share),
+            delta_ref_share = as_float(row.delta_ref_share),
+            pct_activity_new_c = as_float(row.pct_activity_new_c),
+            pct_activity_ref_c = as_float(row.pct_activity_ref_c),
+            pct_activity_rep_c = as_float(row.pct_activity_rep_c),
+            pct_activity_reu_c = as_float(row.pct_activity_reu_c),
+            pct_toaster_service = as_float(row.pct_toaster_service),
+            pct_virgin_metal_m = as_float(row.pct_virgin_metal_m),
+            pct_activity_vmtl_m = as_float(row.pct_activity_vmtl_m),
+            pct_factor_m_total = as_float(row.pct_factor_m_total),
+            pct_activity_factor_vmtl_m = as_float(row.pct_activity_factor_vmtl_m),
+            mechanism = as_string(row.mechanism),
+            transmission = as_string(row.transmission),
+        ))
+    end
+    return out
+end
+
+function material_saving_transmission_summary(rows)
+    savers = material_saving_rows(rows)
+    out = NamedTuple[]
+    for strategy in POLICY_STRATEGIES
+        strategy_rows = rows_for_strategy(savers, strategy)
+        isempty(strategy_rows) && continue
+        for spec in MATERIAL_SAVING_TRANSMISSION_SPECS
+            push!(out, (
+                strategy = strategy,
+                side = spec.side,
+                family = spec.family,
+                component = spec.component,
+                count = length(strategy_rows),
+                median_delta = finite_median(strategy_rows, spec.field),
+                q25_delta = finite_quantile(strategy_rows, spec.field, 0.25),
+                q75_delta = finite_quantile(strategy_rows, spec.field, 0.75),
+                median_pct = spec.pct === nothing ? NaN :
+                             finite_median(strategy_rows, spec.pct),
+                q25_pct = spec.pct === nothing ? NaN :
+                          finite_quantile(strategy_rows, spec.pct, 0.25),
+                q75_pct = spec.pct === nothing ? NaN :
+                          finite_quantile(strategy_rows, spec.pct, 0.75),
+                expansion_share = signed_share(strategy_rows, spec.field, :positive),
+                contraction_share = signed_share(strategy_rows, spec.field, :negative),
+            ))
+        end
+    end
+    return out
+end
+
+function material_saving_transmission_sign_patterns(rows)
+    savers = material_saving_rows(rows)
+    predicates = (
+        (pattern = :new_production_contracts,
+            test = row -> as_float(row.delta_activity_new_c) < -1.0e-8),
+        (pattern = :refurbishment_output_expands,
+            test = row -> as_float(row.delta_activity_ref_c) > 1.0e-8),
+        (pattern = :recycled_metal_output_expands,
+            test = row -> as_float(row.delta_recycled_metal_c) > 1.0e-8),
+        (pattern = :recycling_share_expands,
+            test = row -> as_float(row.delta_rec_share) > 1.0e-8),
+        (pattern = :m_virgin_metal_output_contracts,
+            test = row -> as_float(row.delta_virgin_metal_m) < -1.0e-8),
+        (pattern = :m_total_factor_use_contracts,
+            test = row -> as_float(row.delta_factor_m_total) < -1.0e-8),
+        (pattern = :toaster_service_contracts,
+            test = row -> as_float(row.delta_toaster_service) < -1.0e-8),
+        (pattern = :toaster_service_expands,
+            test = row -> as_float(row.delta_toaster_service) > 1.0e-8),
+    )
+    out = NamedTuple[]
+    for strategy in POLICY_STRATEGIES
+        strategy_rows = rows_for_strategy(savers, strategy)
+        isempty(strategy_rows) && continue
+        for pred in predicates
+            n = count(pred.test, strategy_rows)
+            push!(out, (
+                strategy = strategy,
+                pattern = pred.pattern,
+                count = n,
+                share_within_material_saving = n / length(strategy_rows),
+                material_saving_rows = length(strategy_rows),
+            ))
+        end
+    end
+    return out
+end
+
 function country_distribution_summary(rows, specs, dimension::Symbol; group_by::Symbol = :strategy)
     out = NamedTuple[]
     groups = sort(collect(Set(as_string(getproperty(row, group_by)) for row in rows)); by = string)
@@ -526,6 +680,12 @@ outputs = Dict(
         transmission_strategy_summary(comparison_rows),
     "mechanism_transmission_summary" =>
         mechanism_transmission_summary(comparison_rows),
+    "material_saving_transmission_set" =>
+        material_saving_transmission_set(comparison_rows),
+    "material_saving_transmission_summary" =>
+        material_saving_transmission_summary(comparison_rows),
+    "material_saving_transmission_sign_patterns" =>
+        material_saving_transmission_sign_patterns(comparison_rows),
     "transmission_parameter_rules" =>
         transmission_parameter_rules(comparison_rows),
     "transmission_eol_service_rules" =>
