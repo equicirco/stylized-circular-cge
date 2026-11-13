@@ -324,6 +324,8 @@ function _route_unit_cost(params, bench, policy::PolicyWedges, route::Symbol)
 end
 
 function _pre_fiscal_income(params, bench)
+    # Calibration reference for starting values and the demand-income ratio;
+    # counterfactual income is computed from actual household receipts below.
     return sum(values(bench.factor_endowment)) + params.delta * bench.stock0
 end
 
@@ -451,9 +453,10 @@ function JCGECore.build!(block::SingleCountryBlock{:fiscal_income},
     recycled_var = route -> _evar(:RUSE, route)
     eol_var = use -> _evar(:EOL, use)
 
-    expr = _eeq(_evar(:Y_PREFISCAL), _econst(_pre_fiscal_income(params, bench)))
+    income_accounts = _household_payment_accounts(bench, policy)
+    expr = _eeq(_evar(:Y_PREFISCAL), income_accounts.prefiscal[:HOH])
     _register_ast_equation!(ctx, block, :prefiscal_income, expr;
-        info = "prefiscal income records factor and EOL endowment income")
+        info = "prefiscal income records actual factor earnings, EOL receipts, and operating surpluses or losses")
 
     expr = _eeq(_evar(:GOV_NET),
         _policy_net_ast(policy;
@@ -512,12 +515,10 @@ function JCGECore.build!(block::SingleCountryBlock{:demand},
     _register_ast_equation!(ctx, block, :household_toaster_demand, expr;
         info = "toaster-service demand follows an income-scaled isoelastic demand curve")
 
-    expr = _eeq(_evar(:Z, :BRD),
-        _ediv(
-            _eadd(_evar(:Y_HOH), _eneg(_emul(_evar(:P_TST), _evar(:Z, :TST)))),
-            _evar(:P_BRD)))
-    _register_ast_equation!(ctx, block, :household_bread_demand, expr;
-        info = "bread demand absorbs residual household income after toaster-service expenditure")
+    # With actual receipts and all activity surpluses returned to their owner,
+    # the household budget follows from the payment accounts. Its residual is
+    # checked in closed_economy_residuals; imposing it again makes the system
+    # rank deficient. Bread therefore still absorbs residual expenditure.
 
     for route in ROUTES
         expr = _eeq(_evar(:Z, route),
@@ -769,14 +770,21 @@ function _fiscal_accounting(result)
     haskey(result.context.variables, :Y_HOH) || return (
         household_income = NaN,
         prefiscal_income = NaN,
+        factor_income = NaN,
+        eol_income = NaN,
+        operating_surplus = NaN,
         government_net = NaN,
         government_revenue = NaN,
         government_subsidy = NaN,
         government_transfer = NaN,
     )
+    income = _household_income_accounting(result).components[:HOH]
     return (
         household_income = _solved_value(result, :Y_HOH),
         prefiscal_income = _solved_value(result, :Y_PREFISCAL),
+        factor_income = income.factor_income,
+        eol_income = income.eol_income,
+        operating_surplus = income.operating_surplus,
         government_net = _solved_value(result, :GOV_NET),
         government_revenue = _solved_value(result, :GOV_REVENUE),
         government_subsidy = _solved_value(result, :GOV_SUBSIDY),
@@ -948,10 +956,16 @@ function closed_economy_residuals(result)
             NaN
         end
 
+    accounts = haskey(result.context.variables, :Y_HOH) ? _household_income_accounting(result) : nothing
+    prefiscal_income_balance = accounts === nothing ? NaN : accounts.prefiscal_balance[:HOH]
+    financial_account_balance = accounts === nothing ? Dict{Symbol,Float64}() : accounts.account_balance
+    max_abs_financial_residual = accounts === nothing ? NaN : accounts.max_abs_account_residual
+
     market_values = vcat(
         collect(values(material_balance)),
         [eol_balance, household_budget, income_balance,
-            government_budget, government_transfer],
+            government_budget, government_transfer, prefiscal_income_balance],
+        collect(values(financial_account_balance)),
     )
     capacity_values = vcat(
         collect(values(factor_slack)),
@@ -974,6 +988,9 @@ function closed_economy_residuals(result)
         toaster_composite = toaster_composite,
         household_budget = household_budget,
         income_balance = income_balance,
+        prefiscal_income_balance = prefiscal_income_balance,
+        financial_account_balance = financial_account_balance,
+        max_abs_financial_residual = max_abs_financial_residual,
         government_budget = government_budget,
         government_transfer = government_transfer,
         max_abs_market_residual = _max_abs(market_values),

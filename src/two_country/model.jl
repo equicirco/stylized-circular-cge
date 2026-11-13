@@ -440,17 +440,18 @@ function JCGECore.build!(block::TwoCountryBlock{:fiscal_income},
     recycled_var = route -> _evar(:RUSE, route, :C)
     eol_var = use -> _evar(:EOL_C, use)
 
-    expr = _eeq(_evar(:Y_PREFISCAL_M), _econst(bench.prefiscal_income_m))
+    income_accounts = _household_payment_accounts(bench, policy; two_country = true)
+    expr = _eeq(_evar(:Y_PREFISCAL_M), income_accounts.prefiscal[:HOH_M])
     _register_ast_equation!(ctx, block, :prefiscal_income_m, expr;
-        info = "country M prefiscal income records mining-country factor endowment income")
+        info = "country M prefiscal income records actual factor earnings and domestic operating surpluses or losses")
     expr = _eeq(_evar(:Y_HOH_M),
         _eadd(_evar(:Y_PREFISCAL_M), _econst(-bench.nfa_transfer)))
     _register_ast_equation!(ctx, block, :household_income_m, expr;
         info = "country M household income records prefiscal income net of benchmark financial outflow")
 
-    expr = _eeq(_evar(:Y_PREFISCAL_C), _econst(bench.prefiscal_income_c))
+    expr = _eeq(_evar(:Y_PREFISCAL_C), income_accounts.prefiscal[:HOH_C])
     _register_ast_equation!(ctx, block, :prefiscal_income_c, expr;
-        info = "country C prefiscal income records factor, EOL, and benchmark financial inflow income")
+        info = "country C prefiscal income records actual factor earnings, EOL receipts, operating surpluses or losses, and the fixed financial inflow")
 
     expr = _eeq(_evar(:GOV_NET_C),
         _policy_net_ast(policy;
@@ -502,12 +503,9 @@ function JCGECore.build!(block::TwoCountryBlock{:demand},
     _register_ast_equation!(ctx, block, :household_toaster_demand_c, expr;
         info = "country C toaster-service demand follows an income-scaled isoelastic demand curve")
 
-    expr = _eeq(_evar(:Z, :BRD_C),
-        _ediv(
-            _eadd(_evar(:Y_HOH_C), _eneg(_emul(_evar(:P_TST_C), _evar(:Z, :TST_C)))),
-            _evar(:P_BRD_C)))
-    _register_ast_equation!(ctx, block, :household_bread_demand_c, expr;
-        info = "country C bread demand absorbs residual household income after toaster-service expenditure")
+    # Country C's budget is implied by the complete payment accounts and the
+    # country M budget below. Retain its independently reconstructed residual
+    # as a validation check instead of adding a dependent solver equation.
     expr = _eeq(_evar(:Z, :BRD_M), _ediv(_evar(:Y_HOH_M), _evar(:P_BRD_M)))
     _register_ast_equation!(ctx, block, :household_bread_demand_m, expr;
         info = "country M bread demand follows disposable income")
@@ -870,10 +868,16 @@ function two_country_closed_economy_residuals(result)
     government_transfer =
         _solved_value(result, :GOV_TRANSFER_C) - _solved_value(result, :GOV_NET_C)
 
+    accounts = _household_income_accounting(result; two_country = true)
+    prefiscal_income_balance_m = accounts.prefiscal_balance[:HOH_M]
+    prefiscal_income_balance_c = accounts.prefiscal_balance[:HOH_C]
+
     market_values = vcat(
         collect(values(material_balance)),
         [eol_balance, household_budget_m, household_budget_c,
-            income_balance_m, income_balance_c, government_budget, government_transfer],
+            income_balance_m, income_balance_c, government_budget, government_transfer,
+            prefiscal_income_balance_m, prefiscal_income_balance_c],
+        collect(values(accounts.account_balance)),
     )
     capacity_values = vcat(
         collect(values(factor_slack)),
@@ -898,6 +902,10 @@ function two_country_closed_economy_residuals(result)
         household_budget_c = household_budget_c,
         income_balance_m = income_balance_m,
         income_balance_c = income_balance_c,
+        prefiscal_income_balance_m = prefiscal_income_balance_m,
+        prefiscal_income_balance_c = prefiscal_income_balance_c,
+        financial_account_balance = accounts.account_balance,
+        max_abs_financial_residual = accounts.max_abs_account_residual,
         government_budget = government_budget,
         government_transfer = government_transfer,
         max_abs_market_residual = _max_abs(market_values),
@@ -922,6 +930,7 @@ function two_country_indicators(result)
         for route in MATERIAL_ROUTES)
     virgin_imports = sum(values(virgin_use_by_route))
     recycled_use = sum(values(recycled_use_by_route))
+    income = _household_income_accounting(result; two_country = true).components
     return (
         closure = metadata.closure,
         bread_m = _solved_value(result, :Z_BRD_M),
@@ -946,6 +955,12 @@ function two_country_indicators(result)
             household_income_c = _solved_value(result, :Y_HOH_C),
             prefiscal_income_m = _solved_value(result, :Y_PREFISCAL_M),
             prefiscal_income_c = _solved_value(result, :Y_PREFISCAL_C),
+            factor_income_m = income[:HOH_M].factor_income,
+            factor_income_c = income[:HOH_C].factor_income,
+            eol_income_c = income[:HOH_C].eol_income,
+            operating_surplus_m = income[:HOH_M].operating_surplus,
+            operating_surplus_c = income[:HOH_C].operating_surplus,
+            financial_transfer = income[:HOH_M].financial_outflow,
             government_net_c = _solved_value(result, :GOV_NET_C),
             government_revenue_c = _solved_value(result, :GOV_REVENUE_C),
             government_subsidy_c = _solved_value(result, :GOV_SUBSIDY_C),

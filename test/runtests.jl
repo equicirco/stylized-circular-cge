@@ -3,6 +3,8 @@ using JuMP
 using Test
 
 const CLOSED_ECONOMY_ATOL = 1.0e-5
+const CALIBRATION_OPTIMIZER = optimizer_with_attributes(StylizedCircularCGE.Ipopt.Optimizer,
+    "print_level" => 0, "sb" => "yes", "tol" => 1.0e-11)
 
 function test_closed_fiscal_markets(out; atol = CLOSED_ECONOMY_ATOL)
     @test out.closed_economy.max_abs_market_residual <= atol
@@ -11,8 +13,34 @@ function test_closed_fiscal_markets(out; atol = CLOSED_ECONOMY_ATOL)
     @test abs(out.closed_economy.eol_balance) <= atol
     @test abs(out.closed_economy.household_budget) <= atol
     @test abs(out.closed_economy.income_balance) <= atol
+    @test abs(out.closed_economy.prefiscal_income_balance) <= atol
+    @test out.closed_economy.max_abs_financial_residual <= atol
+    @test all(balance -> abs(balance) <= atol,
+        values(out.closed_economy.financial_account_balance))
+    @test isapprox(out.fiscal.factor_income, out.factor.total; atol)
+    @test isapprox(out.fiscal.prefiscal_income,
+        out.fiscal.factor_income + out.fiscal.eol_income + out.fiscal.operating_surplus; atol)
     @test abs(out.closed_economy.government_budget) <= atol
     @test abs(out.closed_economy.government_transfer) <= atol
+    return nothing
+end
+
+function test_two_country_fiscal_markets(out; atol = CLOSED_ECONOMY_ATOL)
+    @test out.closed_economy.max_abs_market_residual <= atol
+    @test out.closed_economy.max_abs_financial_residual <= atol
+    @test all(balance -> abs(balance) <= atol,
+        values(out.closed_economy.financial_account_balance))
+    @test isapprox(out.fiscal.factor_income_m, out.factor.by_country[:M]; atol)
+    @test isapprox(out.fiscal.factor_income_c, out.factor.by_country[:C]; atol)
+    @test isapprox(out.fiscal.prefiscal_income_m,
+        out.fiscal.factor_income_m + out.fiscal.operating_surplus_m; atol)
+    @test isapprox(out.fiscal.prefiscal_income_c,
+        out.fiscal.factor_income_c + out.fiscal.eol_income_c +
+        out.fiscal.operating_surplus_c + out.fiscal.financial_transfer; atol)
+    @test isapprox(out.fiscal.household_income_m,
+        out.fiscal.prefiscal_income_m - out.fiscal.financial_transfer; atol)
+    @test isapprox(out.fiscal.household_income_c,
+        out.fiscal.prefiscal_income_c + out.fiscal.government_transfer_c; atol)
     return nothing
 end
 
@@ -147,9 +175,17 @@ end
     residuals = benchmark_residuals(result)
     @test residuals.max_abs <= 1.0e-5
 
-    fiscal_result = solve(fiscal_baseline(replicate_benchmark = true))
+    # Check the actual optimizing baseline, without fixing its quantities to
+    # the answer being tested. Require convergence as well as replication.
+    fiscal_result = solve(fiscal_baseline(); optimizer = CALIBRATION_OPTIMIZER)
+    @test termination_status(fiscal_result.context.model) == JuMP.MOI.LOCALLY_SOLVED
     fiscal_residuals = benchmark_residuals(fiscal_result)
     @test fiscal_residuals.max_abs <= 1.0e-5
+    fiscal_out = indicators(fiscal_result)
+    test_closed_fiscal_markets(fiscal_out)
+    @test isapprox(fiscal_out.fiscal.factor_income, 350.0; atol = 1.0e-5)
+    @test isapprox(fiscal_out.fiscal.eol_income, 50.0; atol = 1.0e-5)
+    @test abs(fiscal_out.fiscal.operating_surplus) <= 1.0e-5
 end
 
 @testset "one-period model" begin
@@ -246,7 +282,8 @@ end
 end
 
 @testset "two-country fiscal extension" begin
-    result = solve(two_country_fiscal_baseline(replicate_benchmark = true))
+    result = solve(two_country_fiscal_baseline(); optimizer = CALIBRATION_OPTIMIZER)
+    @test termination_status(result.context.model) == JuMP.MOI.LOCALLY_SOLVED
     residuals = two_country_benchmark_residuals(result)
     @test residuals.max_abs <= 1.0e-5
 
@@ -260,18 +297,35 @@ end
     @test isapprox(out.fiscal.household_income_m, 25.0; atol = 1.0e-4)
     @test isapprox(out.fiscal.household_income_c, 375.0; atol = 1.0e-4)
     @test abs(out.fiscal.government_net_c) <= 1.0e-6
+    test_two_country_fiscal_markets(out)
 
-    taxed = two_country_indicators(solve(two_country_fiscal_baseline(
-        policy = single_wedge(:material, :VMTL, 0.25))))
+    taxed_result = solve(two_country_fiscal_baseline(
+        policy = single_wedge(:material, :VMTL, 0.25)))
+    taxed = two_country_indicators(taxed_result)
     @test taxed.prices.material[:VMTL] > out.prices.material[:VMTL]
     @test taxed.fiscal.government_revenue_c > 0.0
     @test taxed.fiscal.government_net_c > 0.0
+    test_two_country_fiscal_markets(taxed)
+
+    mining_accounts = StylizedCircularCGE._household_income_accounting(taxed_result; two_country = true)
+    # The tax is collected in C: the M producer receives the import price net
+    # of the wedge, while its household receives actual factor earnings and surplus.
+    @test isapprox(mining_accounts.operating_surplus[:VMTL_M],
+        (taxed.prices.material[:VMTL] - 0.25) * taxed.virgin_metal_m -
+        taxed.factor.by_activity[:VMTL_M]; atol = 1.0e-5)
 
     supported = two_country_indicators(solve(two_country_fiscal_baseline(
         policy = single_wedge(:route, :REF, -0.25))))
     @test supported.route_share[:REF] > out.route_share[:REF]
-    @test supported.prices.route[:REF] < out.prices.route[:REF]
+    @test isapprox(supported.fiscal.government_subsidy_c,
+        0.25 * supported.route_quantity[:REF]; atol = 1.0e-5)
     @test supported.fiscal.government_subsidy_c > 0.0
+    test_two_country_fiscal_markets(supported)
+
+    recycled = two_country_indicators(solve(two_country_fiscal_baseline(
+        policy = single_wedge(:eol, :REC, -0.25))))
+    test_two_country_fiscal_markets(recycled)
+    @test recycled.fiscal.government_subsidy_c > 0.0
 
     specs = two_country_policy_grid(:material, :VMTL, [0.0, 0.25])
     records = run_two_country_grid(specs)
@@ -313,6 +367,44 @@ end
     @test isfile(paths.comparison)
     @test isfile(paths.summary)
     @test occursin("upstream_output_reduction_m", read(paths.comparison, String))
+end
+
+@testset "household earnings under factor underutilization" begin
+    for two_country in (false, true)
+        result = solve(two_country ? two_country_fiscal_baseline() : fiscal_baseline())
+        bench = two_country ? two_country_benchmark() : synthetic_benchmark()
+        before = two_country ? two_country_indicators(result) : indicators(result)
+        factors = two_country ? TWO_COUNTRY_FACTORS : FACTORS
+        activities = two_country ? TWO_COUNTRY_PRODUCTION_ACTIVITIES :
+            StylizedCircularCGE.PRODUCTION_ACTIVITIES
+        for factor in factors
+            uses = [result.context.variables[StylizedCircularCGE._global_var(:F, factor, a)]
+                for a in activities
+                if !two_country || factor in StylizedCircularCGE._two_country_activity_factors(a)]
+            # This restriction belongs only to the test: guarantee unused
+            # endowments so a fixed-prefiscal-income regression cannot pass.
+            @constraint(result.context.model, sum(uses) <= 0.9 * bench.factor_endowment[factor])
+        end
+        optimize!(result.context.model)
+        @test termination_status(result.context.model) == JuMP.MOI.LOCALLY_SOLVED
+        after = two_country ? two_country_indicators(result) : indicators(result)
+        @test after.factor.total < before.factor.total - 1.0
+        @test after.closed_economy.max_factor_slack > 1.0
+        if two_country
+            test_two_country_fiscal_markets(after)
+            @test after.fiscal.factor_income_m < before.fiscal.factor_income_m - 1.0
+            @test after.fiscal.factor_income_c < before.fiscal.factor_income_c - 1.0
+            @test !isapprox(after.fiscal.prefiscal_income_m, before.fiscal.prefiscal_income_m;
+                atol = 1.0e-4)
+            @test !isapprox(after.fiscal.prefiscal_income_c, before.fiscal.prefiscal_income_c;
+                atol = 1.0e-4)
+        else
+            test_closed_fiscal_markets(after)
+            @test after.fiscal.factor_income < before.fiscal.factor_income - 1.0
+            @test !isapprox(after.fiscal.prefiscal_income, before.fiscal.prefiscal_income;
+                atol = 1.0e-4)
+        end
+    end
 end
 
 @testset "policy response" begin
