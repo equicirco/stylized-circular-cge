@@ -151,6 +151,11 @@ function validate_results(; results_dir = RESULTS, run_dir = RUN_DIR,
     return summary
 end
 
+function start_stage(command; output = stdout, errors = stderr)
+    # run(...; wait=false) otherwise defaults child streams to devnull.
+    return run(pipeline(command; stdin = devnull, stdout = output, stderr = errors); wait = false)
+end
+
 function run_stages(environment, workers)
     state = TOML.parsefile(STATUS_PATH)
     completed = String.(get(state, "completed_stages", String[]))
@@ -171,13 +176,13 @@ function run_stages(environment, workers)
             flush(stdout)
             script = joinpath(ROOT, relative)
             command = `$(Base.julia_cmd()) --project=$ROOT --threads=1 $script`
-            process = run(addenv(command,
+            process = start_stage(addenv(command,
                 "OPENBLAS_NUM_THREADS" => "1", "OMP_NUM_THREADS" => "1",
                 "JULIA_NUM_THREADS" => "1", "JCGE_EXPERIMENT_WORKERS" => string(workers),
                 "JCGE_REGION_GRID" => "full", "JCGE_NESTED_EOL_GRID" => "route",
                 "JCGE_CHECKPOINT_ROOT" => joinpath(RUN_DIR, "checkpoints"),
                 "JCGE_CHECKPOINT_BATCH_SIZE" => "64",
-                "JCGE_RUN_FINGERPRINT" => environment["source_fingerprint"]); wait = false)
+                "JCGE_RUN_FINGERPRINT" => environment["source_fingerprint"]))
             state["child_pid"] = getpid(process)
             atomic_toml(STATUS_PATH, state)
             wait(process)

@@ -5,6 +5,21 @@ module AnalysisRunnerForTests
 include(joinpath(@__DIR__, "..", "scenarios", "run_analysis.jl"))
 end
 
+@testset "detached child stream forwarding" begin
+    mktempdir() do directory
+        path = joinpath(directory, "child.log")
+        open(path, "w") do io
+            command = `$(Base.julia_cmd()) --startup-file=no -e 'println("child stdout"); println(stderr, "child stderr")'`
+            process = AnalysisRunnerForTests.start_stage(command; output = io, errors = io)
+            wait(process)
+            @test success(process)
+        end
+        content = read(path, String)
+        @test occursin("child stdout", content)
+        @test occursin("child stderr", content)
+    end
+end
+
 @testset "complete-run result validation" begin
     mktempdir() do directory
         tables = Tuple{String,Symbol}[]
