@@ -92,6 +92,20 @@ OPENBLAS_NUM_THREADS=1 JCGE_EXPERIMENT_WORKERS=6 julia --project=. scenarios/sin
 Generated CSVs are written under the matching `results/*/generated/`
 directory.
 
+To rerun all designs used in the paper and regenerate their existing analytics:
+
+```bash
+julia --project=. scenarios/run_analysis.jl --workers 8
+```
+
+The first execution preserves previous results under `results/archive/` and
+records the source commit and dependency environment under `results/run/`.
+Completed batches are saved atomically; invoking the same command resumes them.
+Changed model sources, calibration data, dependencies, or grid labels are rejected
+instead of mixing incompatible checkpoints. Progress and final validation are
+recorded under `results/run/`. Numerical failures remain in the result tables;
+completion does not imply that every model configuration solved successfully.
+
 ## Running Analytics
 
 ```bash

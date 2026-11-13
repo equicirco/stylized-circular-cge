@@ -1,4 +1,6 @@
 using StylizedCircularCGE
+include(joinpath(@__DIR__, "..", "common", "checkpointed_execution.jl"))
+using .ScenarioExecution
 
 output_dir = joinpath(@__DIR__, "..", "..", "results", "single_country", "generated")
 mkpath(output_dir)
@@ -75,9 +77,12 @@ route_specs = Dict(route => parameter_policy_grid(;
         base_grid...)
     for route in LIFE_EXTENSION_ROUTES)
 
-tax_results = run_grid(tax_specs; closure = :fiscal, execution_kwargs...)
-recycling_results = run_grid(recycling_specs; closure = :fiscal, execution_kwargs...)
-route_results = Dict(route => run_grid(route_specs[route]; closure = :fiscal, execution_kwargs...)
+tax_results = checkpointed_grid(tax_specs; executor = run_grid,
+    key = "single_country/nested/tax", closure = :fiscal, execution_kwargs...)
+recycling_results = checkpointed_grid(recycling_specs; executor = run_grid,
+    key = "single_country/nested/recycling", closure = :fiscal, execution_kwargs...)
+route_results = Dict(route => checkpointed_grid(route_specs[route]; executor = run_grid,
+    key = "single_country/nested/$(lowercase(String(route)))", closure = :fiscal, execution_kwargs...)
                      for route in LIFE_EXTENSION_ROUTES)
 
 function group_key(row, fields)

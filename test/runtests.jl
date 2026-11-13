@@ -601,3 +601,6 @@ end
     planner_record = run_experiment(ExperimentSpec("planner-check"); closure = :planner)
     @test planner_record.closure == :planner
 end
+
+include("checkpointed_execution.jl")
+include("analysis_runner.jl")

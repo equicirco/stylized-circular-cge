@@ -1,4 +1,6 @@
 using StylizedCircularCGE
+include(joinpath(@__DIR__, "..", "common", "checkpointed_execution.jl"))
+using .ScenarioExecution
 
 output_dir = joinpath(@__DIR__, "..", "..", "results", "two_country", "generated")
 mkpath(output_dir)
@@ -64,9 +66,12 @@ recycling_specs = two_country_parameter_policy_grid(;
     prefix = "two-country-region-recycling-support",
     base_grid...)
 
-tax_results = run_two_country_grid(tax_specs; execution_kwargs...)
-support_results = run_two_country_grid(support_specs; execution_kwargs...)
-recycling_results = run_two_country_grid(recycling_specs; execution_kwargs...)
+tax_results = checkpointed_grid(tax_specs; executor = run_two_country_grid,
+    key = "two_country/main/tax", execution_kwargs...)
+support_results = checkpointed_grid(support_specs; executor = run_two_country_grid,
+    key = "two_country/main/refurbishment", execution_kwargs...)
+recycling_results = checkpointed_grid(recycling_specs; executor = run_two_country_grid,
+    key = "two_country/main/recycling", execution_kwargs...)
 
 const MARKET_TOL = 1.0e-5
 
