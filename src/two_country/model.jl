@@ -110,7 +110,12 @@ function _ensure_two_country_fiscal_vars!(ctx::JCGERuntime.KernelContext, bench)
     _ensure_var!(ctx, :Y_PREFISCAL_M; start = bench.prefiscal_income_m)
     _ensure_var!(ctx, :Y_HOH_M; start = bench.disposable_income_m)
     _ensure_var!(ctx, :Y_PREFISCAL_C; start = bench.prefiscal_income_c)
-    _ensure_var!(ctx, :Y_HOH_C; start = bench.prefiscal_income_c)
+    _ensure_var!(ctx, :Y_HOH_C; start = bench.disposable_income_c)
+    _ensure_var!(ctx, :C_HOH_M; start = bench.consumption_budget_m)
+    _ensure_var!(ctx, :C_HOH_C; start = bench.consumption_budget_c)
+    _ensure_var!(ctx, :S_HOH_M; lower = nothing, start = bench.nfa_transfer)
+    _ensure_var!(ctx, :S_HOH_C; lower = nothing, start = -bench.nfa_transfer)
+    _ensure_var!(ctx, :SAVING_ADJUSTMENT; lower = nothing, start = 0.0)
     _ensure_var!(ctx, :GOV_NET_C; lower = nothing, start = 0.0)
     _ensure_var!(ctx, :GOV_REVENUE_C; lower = 0.0, start = 0.0)
     _ensure_var!(ctx, :GOV_SUBSIDY_C; lower = 0.0, start = 0.0)
@@ -444,14 +449,13 @@ function JCGECore.build!(block::TwoCountryBlock{:fiscal_income},
     expr = _eeq(_evar(:Y_PREFISCAL_M), income_accounts.prefiscal[:HOH_M])
     _register_ast_equation!(ctx, block, :prefiscal_income_m, expr;
         info = "country M prefiscal income records actual factor earnings and domestic operating surpluses or losses")
-    expr = _eeq(_evar(:Y_HOH_M),
-        _eadd(_evar(:Y_PREFISCAL_M), _econst(-bench.nfa_transfer)))
+    expr = _eeq(_evar(:Y_HOH_M), _evar(:Y_PREFISCAL_M))
     _register_ast_equation!(ctx, block, :household_income_m, expr;
-        info = "country M household income records prefiscal income net of benchmark financial outflow")
+        info = "country M disposable income equals actual prefiscal earnings before saving")
 
     expr = _eeq(_evar(:Y_PREFISCAL_C), income_accounts.prefiscal[:HOH_C])
     _register_ast_equation!(ctx, block, :prefiscal_income_c, expr;
-        info = "country C prefiscal income records actual factor earnings, EOL receipts, operating surpluses or losses, and the fixed financial inflow")
+        info = "country C prefiscal income records actual factor earnings, EOL receipts, and operating surpluses or losses")
 
     expr = _eeq(_evar(:GOV_NET_C),
         _policy_net_ast(policy;
@@ -484,6 +488,25 @@ function JCGECore.build!(block::TwoCountryBlock{:fiscal_income},
     _register_ast_equation!(ctx, block, :household_income_c, expr;
         info = "country C household income includes prefiscal income and net government transfer")
 
+    for country in (:M, :C)
+        income = Symbol(:Y_HOH_, country)
+        saving = Symbol(:S_HOH_, country)
+        consumption = Symbol(:C_HOH_, country)
+        expr = _eeq(_evar(saving), _emul(
+            _eadd(_econst(bench.saving_share[country]), _evar(:SAVING_ADJUSTMENT)),
+            _evar(income)))
+        _register_ast_equation!(ctx, block, :household_saving, expr;
+            info = "calibrated saving shares receive the same market-clearing adjustment in both countries",
+            indices = (country,))
+        expr = _eeq(_evar(consumption), _eadd(_evar(income), _eneg(_evar(saving))))
+        _register_ast_equation!(ctx, block, :household_consumption_budget, expr;
+            info = "consumption expenditure equals disposable income less net saving; negative saving is borrowing",
+            indices = (country,))
+    end
+    expr = _eeq(_eadd(_evar(:S_HOH_M), _evar(:S_HOH_C)), _econst(0.0))
+    _register_ast_equation!(ctx, block, :financial_market, expr;
+        info = "net household lending and borrowing sum to zero across the two countries")
+
     return nothing
 end
 
@@ -494,11 +517,11 @@ function JCGECore.build!(block::TwoCountryBlock{:demand},
     bench = block.benchmark
     _require_two_country_model(ctx, block)
 
-    y0_c = bench.prefiscal_income_c
+    y0_c = bench.consumption_budget_c
     expr = _eeq(_evar(:Z, :TST_C),
         _emul(
             _econst(bench.output[:TST_C]),
-            _ediv(_evar(:Y_HOH_C), _econst(y0_c)),
+            _ediv(_evar(:C_HOH_C), _econst(y0_c)),
             _epow(_evar(:P_TST_C), _econst(-params.eta_service))))
     _register_ast_equation!(ctx, block, :household_toaster_demand_c, expr;
         info = "country C toaster-service demand follows an income-scaled isoelastic demand curve")
@@ -506,9 +529,9 @@ function JCGECore.build!(block::TwoCountryBlock{:demand},
     # Country C's budget is implied by the complete payment accounts and the
     # country M budget below. Retain its independently reconstructed residual
     # as a validation check instead of adding a dependent solver equation.
-    expr = _eeq(_evar(:Z, :BRD_M), _ediv(_evar(:Y_HOH_M), _evar(:P_BRD_M)))
+    expr = _eeq(_evar(:Z, :BRD_M), _ediv(_evar(:C_HOH_M), _evar(:P_BRD_M)))
     _register_ast_equation!(ctx, block, :household_bread_demand_m, expr;
-        info = "country M bread demand follows disposable income")
+        info = "country M bread demand follows its consumption budget after net saving")
 
     for route in ROUTES
         activity = _two_country_route_activity(route)
@@ -851,15 +874,15 @@ function two_country_closed_economy_residuals(result)
         _solved_value(result, :Z_TST_C)
 
     household_budget_m =
-        _solved_value(result, :Y_HOH_M) -
+        _solved_value(result, :C_HOH_M) -
         _solved_value(result, :P_BRD_M) * _solved_value(result, :Z_BRD_M)
     household_budget_c =
-        _solved_value(result, :Y_HOH_C) -
+        _solved_value(result, :C_HOH_C) -
         (_solved_value(result, :P_BRD_C) * _solved_value(result, :Z_BRD_C) +
          _solved_value(result, :P_TST_C) * _solved_value(result, :Z_TST_C))
     income_balance_m =
         _solved_value(result, :Y_HOH_M) -
-        (_solved_value(result, :Y_PREFISCAL_M) - bench.nfa_transfer)
+        _solved_value(result, :Y_PREFISCAL_M)
     income_balance_c =
         _solved_value(result, :Y_HOH_C) -
         (_solved_value(result, :Y_PREFISCAL_C) + _solved_value(result, :GOV_TRANSFER_C))
@@ -867,6 +890,20 @@ function two_country_closed_economy_residuals(result)
         _solved_value(result, :GOV_NET_C) - _two_country_wedge_accounting(result, metadata.policy).net
     government_transfer =
         _solved_value(result, :GOV_TRANSFER_C) - _solved_value(result, :GOV_NET_C)
+
+    saving = Dict(country => _solved_value(result, Symbol(:S_HOH_, country)) for country in (:M, :C))
+    adjustment = _solved_value(result, :SAVING_ADJUSTMENT)
+    saving_rule = Dict(country => saving[country] -
+        (bench.saving_share[country] + adjustment) *
+        _solved_value(result, Symbol(:Y_HOH_, country)) for country in (:M, :C))
+    consumption_income_balance = Dict(country =>
+        _solved_value(result, Symbol(:C_HOH_, country)) -
+        (_solved_value(result, Symbol(:Y_HOH_, country)) - saving[country])
+        for country in (:M, :C))
+    financial_market = sum(values(saving))
+    export_receipts_m = (_solved_value(result, :P_MAT_C_VMTL) - metadata.policy.material[:VMTL]) *
+        _solved_value(result, :Z_VMTL_M)
+    external_balance = export_receipts_m - saving[:M]
 
     accounts = _household_income_accounting(result; two_country = true)
     prefiscal_income_balance_m = accounts.prefiscal_balance[:HOH_M]
@@ -876,7 +913,8 @@ function two_country_closed_economy_residuals(result)
         collect(values(material_balance)),
         [eol_balance, household_budget_m, household_budget_c,
             income_balance_m, income_balance_c, government_budget, government_transfer,
-            prefiscal_income_balance_m, prefiscal_income_balance_c],
+            prefiscal_income_balance_m, prefiscal_income_balance_c, financial_market, external_balance],
+        collect(values(saving_rule)), collect(values(consumption_income_balance)),
         collect(values(accounts.account_balance)),
     )
     capacity_values = vcat(
@@ -904,6 +942,10 @@ function two_country_closed_economy_residuals(result)
         income_balance_c = income_balance_c,
         prefiscal_income_balance_m = prefiscal_income_balance_m,
         prefiscal_income_balance_c = prefiscal_income_balance_c,
+        saving_rule = saving_rule,
+        consumption_income_balance = consumption_income_balance,
+        financial_market = financial_market,
+        external_balance = external_balance,
         financial_account_balance = accounts.account_balance,
         max_abs_financial_residual = accounts.max_abs_account_residual,
         government_budget = government_budget,
@@ -916,6 +958,7 @@ end
 
 function two_country_indicators(result)
     metadata = _two_country_run_metadata(result)
+    bench = metadata.benchmark
     policy = metadata.policy
     routes = Dict(route =>
             _solved_value(result, _global_var(:Z, _two_country_route_activity(route)))
@@ -953,6 +996,17 @@ function two_country_indicators(result)
         fiscal = (
             household_income_m = _solved_value(result, :Y_HOH_M),
             household_income_c = _solved_value(result, :Y_HOH_C),
+            consumption_budget_m = _solved_value(result, :C_HOH_M),
+            consumption_budget_c = _solved_value(result, :C_HOH_C),
+            net_saving_m = _solved_value(result, :S_HOH_M),
+            net_saving_c = _solved_value(result, :S_HOH_C),
+            saving_adjustment = _solved_value(result, :SAVING_ADJUSTMENT),
+            saving_share_m = bench.saving_share[:M] + _solved_value(result, :SAVING_ADJUSTMENT),
+            saving_share_c = bench.saving_share[:C] + _solved_value(result, :SAVING_ADJUSTMENT),
+            trade_balance_m = ( _solved_value(result, :P_MAT_C_VMTL) - policy.material[:VMTL]) *
+                _solved_value(result, :Z_VMTL_M),
+            trade_balance_c = -( _solved_value(result, :P_MAT_C_VMTL) - policy.material[:VMTL]) *
+                _solved_value(result, :Z_VMTL_M),
             prefiscal_income_m = _solved_value(result, :Y_PREFISCAL_M),
             prefiscal_income_c = _solved_value(result, :Y_PREFISCAL_C),
             factor_income_m = income[:HOH_M].factor_income,

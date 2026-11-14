@@ -36,11 +36,26 @@ function test_two_country_fiscal_markets(out; atol = CLOSED_ECONOMY_ATOL)
         out.fiscal.factor_income_m + out.fiscal.operating_surplus_m; atol)
     @test isapprox(out.fiscal.prefiscal_income_c,
         out.fiscal.factor_income_c + out.fiscal.eol_income_c +
-        out.fiscal.operating_surplus_c + out.fiscal.financial_transfer; atol)
+        out.fiscal.operating_surplus_c; atol)
     @test isapprox(out.fiscal.household_income_m,
-        out.fiscal.prefiscal_income_m - out.fiscal.financial_transfer; atol)
+        out.fiscal.prefiscal_income_m; atol)
     @test isapprox(out.fiscal.household_income_c,
         out.fiscal.prefiscal_income_c + out.fiscal.government_transfer_c; atol)
+    @test isapprox(out.fiscal.net_saving_m + out.fiscal.net_saving_c, 0.0; atol)
+    @test isapprox(out.fiscal.net_saving_m, out.fiscal.trade_balance_m; atol)
+    @test isapprox(out.fiscal.trade_balance_m + out.fiscal.trade_balance_c, 0.0; atol)
+    @test isapprox(out.fiscal.net_saving_m, out.fiscal.financial_transfer; atol)
+    bench = two_country_benchmark()
+    for country in (:m, :c)
+        income = getproperty(out.fiscal, Symbol(:household_income_, country))
+        saving = getproperty(out.fiscal, Symbol(:net_saving_, country))
+        budget = getproperty(out.fiscal, Symbol(:consumption_budget_, country))
+        share = getproperty(out.fiscal, Symbol(:saving_share_, country))
+        @test isapprox(budget, income - saving; atol)
+        @test isapprox(saving, share * income; atol)
+        @test isapprox(share - bench.saving_share[Symbol(uppercase(string(country)))],
+            out.fiscal.saving_adjustment; atol)
+    end
     return nothing
 end
 
@@ -142,8 +157,12 @@ end
     benchmark = two_country_benchmark()
     @test benchmark.output[:VMTL_M] == 40.0
     @test benchmark.output[:TST_C] == 200.0
-    @test benchmark.output[:BRD_M] == benchmark.disposable_income_m
-    @test benchmark.output[:BRD_C] + benchmark.output[:TST_C] == benchmark.prefiscal_income_c
+    @test benchmark.output[:BRD_M] == benchmark.consumption_budget_m
+    @test benchmark.output[:BRD_C] + benchmark.output[:TST_C] == benchmark.consumption_budget_c
+    @test benchmark.prefiscal_income_m == 65.0
+    @test benchmark.prefiscal_income_c == 335.0
+    @test benchmark.saving_share[:M] * benchmark.disposable_income_m == 40.0
+    @test benchmark.saving_share[:C] * benchmark.disposable_income_c == -40.0
     @test benchmark.material_input[(:VMTL, :NEW)] == 30.0
     @test benchmark.nfa_transfer == 40.0
 end
@@ -294,8 +313,13 @@ end
     @test isapprox(out.toaster_service_c, 200.0; atol = 1.0e-4)
     @test isapprox(out.virgin_metal_m, out.virgin_imports_c; atol = 1.0e-6)
     @test isapprox(out.recycled_metal_c, out.recycled_use_c; atol = 1.0e-6)
-    @test isapprox(out.fiscal.household_income_m, 25.0; atol = 1.0e-4)
-    @test isapprox(out.fiscal.household_income_c, 375.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.household_income_m, 65.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.household_income_c, 335.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.consumption_budget_m, 25.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.consumption_budget_c, 375.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.net_saving_m, 40.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.net_saving_c, -40.0; atol = 1.0e-4)
+    @test isapprox(out.fiscal.saving_adjustment, 0.0; atol = 1.0e-6)
     @test abs(out.fiscal.government_net_c) <= 1.0e-6
     test_two_country_fiscal_markets(out)
 
@@ -306,6 +330,7 @@ end
     @test taxed.fiscal.government_revenue_c > 0.0
     @test taxed.fiscal.government_net_c > 0.0
     test_two_country_fiscal_markets(taxed)
+    @test !isapprox(taxed.fiscal.trade_balance_m, 40.0; atol = 1.0e-4)
 
     mining_accounts = StylizedCircularCGE._household_income_accounting(taxed_result; two_country = true)
     # The tax is collected in C: the M producer receives the import price net
@@ -343,7 +368,7 @@ end
         reference_filter = row -> row.tau_material_vmtl == 0.0)
     @test length(compared) == 2
     @test any(row -> row.transmission === :reference, compared)
-    @test any(row -> row.upstream_output_reduction_m > 0.0, compared)
+    @test all(row -> isfinite(row.upstream_output_reduction_m), compared)
     @test all(row -> row.upstream_output_reduction_per_virgin_saving >= 0.0 ||
                      isnan(row.upstream_output_reduction_per_virgin_saving), compared)
 

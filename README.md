@@ -83,6 +83,16 @@ julia --project=. scenarios/two_country/run_fiscal_parameter_regions.jl
 
 The `scripts/run_*.jl` paths remain available as wrappers.
 
+The checkpointed analysis runner supports a two-country-only rerun, preserving
+the single-country results and checking that their files remain unchanged:
+
+```bash
+julia --project=. scenarios/run_analysis.jl --model two_country --workers 8 --archive results/archive/fixed_transfer
+```
+
+The archive destination must be new when starting from changed model sources.
+Repeating the command resumes the saved batches for that source version.
+
 For parallel grid execution:
 
 ```bash

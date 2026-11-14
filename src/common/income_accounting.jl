@@ -96,8 +96,8 @@ function _household_payment_accounts(bench, policy; two_country::Bool = false)
     end
 
     if two_country
-        _income_payment!(payments, :HOH_M, :NFA, :financial, _econst(bench.nfa_transfer))
-        _income_payment!(payments, :NFA, :HOH_C, :financial, _econst(bench.nfa_transfer))
+        _income_payment!(payments, :HOH_M, :NFA, :financial, _evar(:S_HOH_M))
+        _income_payment!(payments, :NFA, :HOH_C, :financial, _evar(:S_HOH_M))
     end
     transfer = two_country ? :GOV_TRANSFER_C : :GOV_TRANSFER
     _income_payment!(payments, government, household, :fiscal_transfer, _evar(transfer))
@@ -110,7 +110,9 @@ function _household_payment_accounts(bench, policy; two_country::Bool = false)
         financial_inflow = _income_payments_sum(payments; payee = h, kind = :financial),
         financial_outflow = _income_payments_sum(payments; payer = h, kind = :financial),
     ) for h in households)
-    prefiscal = Dict(h => _eadd(c.factor, c.eol, c.surplus, c.financial_inflow)
+    # Borrowing finances expenditure; it is separate from earned income.
+    prefiscal = Dict(h => two_country ? _eadd(c.factor, c.eol, c.surplus) :
+        _eadd(c.factor, c.eol, c.surplus, c.financial_inflow)
         for (h, c) in components)
     return (; payments, components, prefiscal, surplus)
 end
@@ -142,7 +144,8 @@ function _household_income_accounting(result; two_country::Bool = false)
     prefiscal_balance = Dict(h => begin
         variable = h === :HOH_M ? :Y_PREFISCAL_M : h === :HOH_C ? :Y_PREFISCAL_C : :Y_PREFISCAL
         _solved_value(result, variable) -
-            (c.factor_income + c.eol_income + c.operating_surplus + c.financial_inflow)
+            (c.factor_income + c.eol_income + c.operating_surplus +
+             (two_country ? 0.0 : c.financial_inflow))
     end for (h, c) in components)
     surplus = Dict(a => _income_value(expr, result) for (a, expr) in accounts.surplus)
     return (; components, payments, account_balance = balances, prefiscal_balance,

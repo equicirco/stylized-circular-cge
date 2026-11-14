@@ -2,6 +2,7 @@ using CSV
 using Dates
 using FileWatching
 using TOML
+using SHA
 
 include(joinpath(@__DIR__, "common", "checkpointed_execution.jl"))
 using .ScenarioExecution
@@ -26,10 +27,37 @@ const STAGES = [
     "cross_model_analytics" => "analytics/cross_model/compare_single_two_country.jl",
 ]
 
-function finish_preparation()
+function output_directories(model)
+    model == "all" && return OUTPUT_DIRECTORIES
+    model == "two_country" && return filter(path -> startswith(path, "two_country") ||
+        startswith(path, "cross_model"), OUTPUT_DIRECTORIES)
+    error("Unknown model selection $(model); use all or two_country")
+end
+
+function selected_stages(model)
+    output_directories(model) # Validate the selection before doing any work.
+    model == "all" && return STAGES
+    return filter(stage -> first(stage) in
+        ("two_country", "two_country_analytics", "cross_model_analytics"), STAGES)
+end
+
+function reused_result_hashes(model)
+    hashes = Dict{String,String}()
+    model == "all" && return hashes
+    for (directory, _, files) in walkdir(joinpath(RESULTS, "single_country"))
+        for name in files
+            path = joinpath(directory, name)
+            hashes[relpath(path, RESULTS)] = bytes2hex(sha256(read(path)))
+        end
+    end
+    isempty(hashes) && error("A two-country-only run requires existing single-country results")
+    return hashes
+end
+
+function finish_preparation(environment)
     # The complete snapshot exists before clearing the old working outputs.
     # Clearing them prevents conditional exports from leaving stale CSVs.
-    for relative in OUTPUT_DIRECTORIES
+    for relative in output_directories(get(environment, "model", "all"))
         directory = joinpath(RESULTS, relative)
         ispath(directory) && rm(directory; recursive = true)
     end
@@ -37,24 +65,28 @@ function finish_preparation()
         "updated_at" => string(now(UTC))))
 end
 
-function prepare_run()
+function prepare_run(; model = "all", archive_path = nothing)
+    output_directories(model)
     fingerprint = source_fingerprint(ROOT)
     if isfile(ENVIRONMENT_PATH)
         environment = TOML.parsefile(ENVIRONMENT_PATH)
-        environment["source_fingerprint"] == fingerprint ||
-            error("Sources or dependencies differ from this run; archive results/run before starting a new run")
-        if !isfile(STATUS_PATH) || TOML.parsefile(STATUS_PATH)["state"] == "preparing"
-            finish_preparation()
+        if environment["source_fingerprint"] == fingerprint && get(environment, "model", "all") == model
+            if !isfile(STATUS_PATH) || TOML.parsefile(STATUS_PATH)["state"] == "preparing"
+                finish_preparation(environment)
+            end
+            return environment
         end
-        return environment
+        archive_path === nothing &&
+            error("Sources or selection differ; specify --archive PATH to preserve this run before a new one")
     end
 
-    archive = joinpath(RESULTS, "archive")
-    ispath(archive) && error("results/archive already exists; refusing to overwrite the previous results")
-    temporary = joinpath(RESULTS, "archive.tmp")
-    ispath(temporary) && error("An incomplete results/archive.tmp exists; inspect it before restarting")
+    archive = archive_path === nothing ? joinpath(RESULTS, "archive") : abspath(ROOT, archive_path)
+    ispath(archive) && error("$(archive) already exists; refusing to overwrite previous results")
+    temporary = archive * ".tmp"
+    ispath(temporary) && error("An incomplete $(temporary) exists; inspect it before restarting")
+    reused = reused_result_hashes(model)
     mkpath(temporary)
-    for relative in OUTPUT_DIRECTORIES
+    for relative in output_directories(model)
         source = joinpath(RESULTS, relative)
         if isdir(source)
             destination = joinpath(temporary, relative)
@@ -62,8 +94,22 @@ function prepare_run()
             cp(source, destination)
         end
     end
+    # Preserve the previous execution record and all its checkpoints before
+    # replacing the working run directory. Keep the active PID lock in place.
+    if isfile(ENVIRONMENT_PATH)
+        old_run = joinpath(temporary, "run")
+        mkpath(old_run)
+        for source in readdir(RUN_DIR; join = true)
+            basename(source) == "analysis.pid" && continue
+            cp(source, joinpath(old_run, basename(source)))
+        end
+    end
     mv(temporary, archive)
     mkpath(RUN_DIR)
+    for source in readdir(RUN_DIR; join = true)
+        basename(source) == "analysis.pid" && continue
+        rm(source; recursive = true)
+    end
     cp(joinpath(ROOT, "Project.toml"), joinpath(RUN_DIR, "Project.toml"))
     cp(joinpath(ROOT, "Manifest.toml"), joinpath(RUN_DIR, "Manifest.toml"))
     environment = Dict(
@@ -73,11 +119,13 @@ function prepare_run()
         "julia_version" => string(VERSION), "created_at" => string(now(UTC)),
         "main_grid" => "full", "nested_grid" => "route",
         "archive" => archive,
+        "model" => model,
+        "reused_result_sha256" => reused,
     )
     atomic_toml(ENVIRONMENT_PATH, environment)
     atomic_toml(STATUS_PATH, Dict("state" => "preparing", "completed_stages" => String[],
         "updated_at" => string(now(UTC))))
-    finish_preparation()
+    finish_preparation(environment)
     println("Preserved previous results in $(archive)")
     println("Recorded source and dependency environment in $(RUN_DIR)")
     flush(stdout)
@@ -118,6 +166,11 @@ function validate_results(; results_dir = RESULTS, run_dir = RUN_DIR,
         required = unique(vcat([:label, :status, :max_abs_market_residual,
             :max_abs_financial_residual, :factor_income, :prefiscal_income,
             :eol_income, :operating_surplus, table.wedge], table.fields))
+        financing_residuals = table.model == "two_country" ?
+            [:saving_rule_m_residual, :saving_rule_c_residual,
+             :consumption_income_m_residual, :consumption_income_c_residual,
+             :financial_market_residual, :external_balance_residual] : Symbol[]
+        append!(required, financing_residuals)
         rows = CSV.File(table.path; select = required)
         all(field -> field in propertynames(rows), required) ||
             error("Missing income or validation fields in $(table.path)")
@@ -126,7 +179,9 @@ function validate_results(; results_dir = RESULTS, run_dir = RUN_DIR,
             error("Duplicate experiment labels in $(table.path)")
         valid(row) = string(row.status) == "LOCALLY_SOLVED" &&
             isfinite(row.max_abs_market_residual) && row.max_abs_market_residual <= 1.0e-5 &&
-            isfinite(row.max_abs_financial_residual) && row.max_abs_financial_residual <= 1.0e-5
+            isfinite(row.max_abs_financial_residual) && row.max_abs_financial_residual <= 1.0e-5 &&
+            all(field -> isfinite(getproperty(row, field)) &&
+                abs(getproperty(row, field)) <= 1.0e-5, financing_residuals)
         key(row) = Tuple(getproperty(row, field) for field in table.fields)
         references = Set(key(row) for row in rows if valid(row) && getproperty(row, table.wedge) == 0.0)
         accepted = [row for row in rows if valid(row)]
@@ -165,7 +220,7 @@ function run_stages(environment, workers)
     state["state"] = "running"
     atomic_toml(STATUS_PATH, state)
     try
-        for (name, relative) in STAGES
+        for (name, relative) in selected_stages(get(environment, "model", "all"))
             name in completed && continue
             source_fingerprint(ROOT) == environment["source_fingerprint"] ||
                 error("Sources or dependencies changed during the run")
@@ -194,6 +249,10 @@ function run_stages(environment, workers)
         end
         source_fingerprint(ROOT) == environment["source_fingerprint"] ||
             error("Sources or dependencies changed before verification")
+        for (relative, expected) in get(environment, "reused_result_sha256", Dict())
+            bytes2hex(sha256(read(joinpath(RESULTS, relative)))) == expected ||
+                error("An unchanged single-country result was modified: $(relative)")
+        end
         validate_results()
         state["state"] = "completed"
         state["updated_at"] = string(now(UTC))
@@ -210,13 +269,15 @@ end
 
 function main(args)
     if "--help" in args
-        println("Usage: julia --project=. scenarios/run_analysis.jl [--workers N] [--prepare-only]")
+        println("Usage: julia --project=. scenarios/run_analysis.jl [--workers N] [--model all|two_country] [--archive PATH] [--prepare-only]")
         println("Runs the full paper designs and existing analytics; rerunning resumes saved batches.")
         println("Previous results: results/archive/. Logs/status/checkpoints: results/run/.")
         return
     end
     workers = 8
     prepare_only = false
+    model = "all"
+    archive_path = nothing
     index = 1
     while index <= length(args)
         if args[index] == "--workers"
@@ -225,6 +286,14 @@ function main(args)
             workers = parse(Int, args[index])
         elseif args[index] == "--prepare-only"
             prepare_only = true
+        elseif args[index] == "--model"
+            index += 1
+            index <= length(args) || error("--model requires all or two_country")
+            model = args[index]
+        elseif args[index] == "--archive"
+            index += 1
+            index <= length(args) || error("--archive requires a destination path")
+            archive_path = args[index]
         else
             error("Unknown argument $(args[index])")
         end
@@ -233,7 +302,7 @@ function main(args)
     workers > 0 || error("Worker count must be positive")
     mkpath(RUN_DIR)
     FileWatching.Pidfile.mkpidlock(joinpath(RUN_DIR, "analysis.pid"); wait = false) do
-        environment = prepare_run()
+        environment = prepare_run(; model, archive_path)
         prepare_only || run_stages(environment, workers)
     end
     return nothing

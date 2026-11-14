@@ -5,6 +5,15 @@ module AnalysisRunnerForTests
 include(joinpath(@__DIR__, "..", "scenarios", "run_analysis.jl"))
 end
 
+@testset "two-country-only stage selection" begin
+    @test first.(AnalysisRunnerForTests.selected_stages("two_country")) ==
+        ["two_country", "two_country_analytics", "cross_model_analytics"]
+    @test AnalysisRunnerForTests.selected_stages("all") == AnalysisRunnerForTests.STAGES
+    @test all(path -> !startswith(path, "single_country"),
+        AnalysisRunnerForTests.output_directories("two_country"))
+    @test_throws ErrorException AnalysisRunnerForTests.selected_stages("unknown")
+end
+
 @testset "detached child stream forwarding" begin
     mktempdir() do directory
         path = joinpath(directory, "child.log")
@@ -47,6 +56,9 @@ end
                 eta_service = 1.0, metal_quality = 0.85,
                 metal_intensity_ref = 0.25, metal_intensity_rep = 1 / 6,
                 yield_ref = 4.0, yield_rep = 3.0, yield_reu = 1.5,
+                saving_rule_m_residual = 0.0, saving_rule_c_residual = 0.0,
+                consumption_income_m_residual = 0.0, consumption_income_c_residual = 0.0,
+                financial_market_residual = 0.0, external_balance_residual = 0.0,
             ), NamedTuple{(wedge,)}((i == 1 ? 0.0 : 0.25,))) for i in 1:3]
             CSV.write(path, rows)
         end

@@ -195,6 +195,10 @@ function two_country_benchmark(params = default_parameters();
     eol_scale = target_retirement / sum(values(raw_eol_allocation))
     eol_allocation = Dict(use => raw_eol_allocation[use] * eol_scale for use in EOL_USES)
     nfa_transfer = sam_values[(:HOH_C, :NFA)]
+    prefiscal_income_m = factor_endowment[:LAB_M] + factor_endowment[:CAP_M]
+    prefiscal_income_c = factor_endowment[:LAB_C] + factor_endowment[:CAP_C] + target_retirement
+    saving_share = Dict(:M => nfa_transfer / prefiscal_income_m,
+        :C => -nfa_transfer / prefiscal_income_c)
 
     return (
         stock0 = stock,
@@ -212,11 +216,12 @@ function two_country_benchmark(params = default_parameters();
         route_scale = route_scale,
         eol_allocation = eol_allocation,
         nfa_transfer = nfa_transfer,
-        prefiscal_income_m = factor_endowment[:LAB_M] + factor_endowment[:CAP_M],
-        disposable_income_m =
-            factor_endowment[:LAB_M] + factor_endowment[:CAP_M] - nfa_transfer,
-        prefiscal_income_c =
-            factor_endowment[:LAB_C] + factor_endowment[:CAP_C] +
-            target_retirement + nfa_transfer,
+        prefiscal_income_m = prefiscal_income_m,
+        prefiscal_income_c = prefiscal_income_c,
+        disposable_income_m = prefiscal_income_m,
+        disposable_income_c = prefiscal_income_c,
+        consumption_budget_m = prefiscal_income_m - nfa_transfer,
+        consumption_budget_c = prefiscal_income_c + nfa_transfer,
+        saving_share = saving_share,
     )
 end
