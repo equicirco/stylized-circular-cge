@@ -1,6 +1,6 @@
 # Two-Country Source
 
-This branch contains the executable leakage/trade extension.
+This directory contains the executable two-country model.
 
 - `core.jl`: two-country benchmark SAM accounting. Country `M` produces local
   bread and all virgin metal. Country `C` produces local bread, recycled

@@ -1,9 +1,8 @@
 cff-version: 1.2.0
 title: StylizedCircularCGE - Stylized circular-economy computable general equilibrium model implemented with JCGE.
 message: >-
-  v0.1.0 - Initial public release of the stylized circular-economy CGE model,
-  including single-country and two-country model variants, scenario scripts,
-  and compact analytics outputs.
+  v0.2.0 - Revised household-income accounting and two-country financial
+  closure, with regenerated results and reproducible scenario execution.
 type: software
 doi: 10.5281/zenodo.20411478
 authors:

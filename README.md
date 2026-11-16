@@ -10,7 +10,7 @@ This file documents the repository layout and execution entry points.
 - `src/StylizedCircularCGE.jl`: package entry point and public exports.
 - `src/common/`: shared model-local equation AST and circular-policy helpers.
 - `src/single_country/`: executable single-country model branch.
-- `src/two_country/`: executable two-country/leakage model branch.
+- `src/two_country/`: executable two-country model branch.
 - `scenarios/single_country/`: scripts that run single-country scenario grids.
 - `scenarios/two_country/`: scripts that run two-country scenario grids.
 - `analytics/single_country/`: analysis scripts for generated single-country
@@ -33,6 +33,8 @@ This file documents the repository layout and execution entry points.
   registering JCGE equation/objective AST objects.
 - `src/common/circular_policy.jl`: shared circular-economy policy-wedge,
   material-intensity, route-yield, and EOL-allocation helpers.
+- `src/common/income_accounting.jl`: household income from current factor
+  payments, end-of-life receipts, and operating surplus.
 
 ## Single-Country Source Files
 
@@ -55,7 +57,7 @@ This file documents the repository layout and execution entry points.
 - `src/two_country/blocks.jl`: two-country JCGE block definitions and block
   ordering.
 - `src/two_country/model.jl`: two-country block build methods, solver entry
-  point, residuals, and indicators.
+  point, household saving and borrowing closure, residuals, and indicators.
 - `src/two_country/scenarios.jl`: two-country experiment specs and grid
   execution.
 - `src/two_country/results.jl`: two-country result flattening and closure
@@ -87,11 +89,11 @@ The checkpointed analysis runner supports a two-country-only rerun, preserving
 the single-country results and checking that their files remain unchanged:
 
 ```bash
-julia --project=. scenarios/run_analysis.jl --model two_country --workers 8 --archive results/archive/fixed_transfer
+julia --project=. scenarios/run_analysis.jl --model two_country --workers 8 --restart
 ```
 
-The archive destination must be new when starting from changed model sources.
-Repeating the command resumes the saved batches for that source version.
+`--restart` replaces the selected outputs and their checkpoints. Omit it to
+resume saved batches for the same source version and model selection.
 
 For parallel grid execution:
 
@@ -108,11 +110,12 @@ To rerun all designs used in the paper and regenerate their existing analytics:
 julia --project=. scenarios/run_analysis.jl --workers 8
 ```
 
-The first execution preserves previous results under `results/archive/` and
-records the source commit and dependency environment under `results/run/`.
+The runner keeps one current result set and records the source commit and
+dependency environment under `results/run/`.
 Completed batches are saved atomically; invoking the same command resumes them.
 Changed model sources, calibration data, dependencies, or grid labels are rejected
-instead of mixing incompatible checkpoints. Progress and final validation are
+instead of mixing incompatible checkpoints; use `--restart` to replace the
+current outputs and start again. Progress and final validation are
 recorded under `results/run/`. Numerical failures remain in the result tables;
 completion does not imply that every model configuration solved successfully.
 

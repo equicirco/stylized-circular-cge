@@ -79,7 +79,7 @@ function checkpointed_grid(specs; executor, key::AbstractString,
     manifest_path = joinpath(directory, "manifest.toml")
     if isfile(manifest_path)
         TOML.parsefile(manifest_path) == configuration ||
-            error("Checkpoint configuration mismatch for $(key); archive it before a fresh run")
+            error("Checkpoint configuration mismatch for $(key); use scenarios/run_analysis.jl --restart for a fresh run")
     else
         atomic_toml(manifest_path, configuration)
     end

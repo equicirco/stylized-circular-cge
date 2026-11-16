@@ -41,93 +41,70 @@ function selected_stages(model)
         ("two_country", "two_country_analytics", "cross_model_analytics"), STAGES)
 end
 
-function reused_result_hashes(model)
+function reused_result_hashes(model; results_dir = RESULTS)
     hashes = Dict{String,String}()
     model == "all" && return hashes
-    for (directory, _, files) in walkdir(joinpath(RESULTS, "single_country"))
+    for (directory, _, files) in walkdir(joinpath(results_dir, "single_country"))
         for name in files
             path = joinpath(directory, name)
-            hashes[relpath(path, RESULTS)] = bytes2hex(sha256(read(path)))
+            hashes[relpath(path, results_dir)] = bytes2hex(sha256(read(path)))
         end
     end
     isempty(hashes) && error("A two-country-only run requires existing single-country results")
     return hashes
 end
 
-function finish_preparation(environment)
-    # The complete snapshot exists before clearing the old working outputs.
-    # Clearing them prevents conditional exports from leaving stale CSVs.
+function finish_preparation(environment; results_dir = RESULTS)
+    # Clearing selected outputs prevents conditional exports from leaving stale CSVs.
     for relative in output_directories(get(environment, "model", "all"))
-        directory = joinpath(RESULTS, relative)
+        directory = joinpath(results_dir, relative)
         ispath(directory) && rm(directory; recursive = true)
     end
-    atomic_toml(STATUS_PATH, Dict("state" => "prepared", "completed_stages" => String[],
+    atomic_toml(joinpath(results_dir, "run", "status.toml"), Dict("state" => "prepared", "completed_stages" => String[],
         "updated_at" => string(now(UTC))))
 end
 
-function prepare_run(; model = "all", archive_path = nothing)
+function prepare_run(; model = "all", restart = false, root = ROOT)
     output_directories(model)
-    fingerprint = source_fingerprint(ROOT)
-    if isfile(ENVIRONMENT_PATH)
-        environment = TOML.parsefile(ENVIRONMENT_PATH)
+    results_dir = joinpath(root, "results")
+    run_dir = joinpath(results_dir, "run")
+    environment_path = joinpath(run_dir, "environment.toml")
+    status_path = joinpath(run_dir, "status.toml")
+    fingerprint = source_fingerprint(root)
+    if isfile(environment_path) && !restart
+        environment = TOML.parsefile(environment_path)
         if environment["source_fingerprint"] == fingerprint && get(environment, "model", "all") == model
-            if !isfile(STATUS_PATH) || TOML.parsefile(STATUS_PATH)["state"] == "preparing"
-                finish_preparation(environment)
+            if !isfile(status_path) || TOML.parsefile(status_path)["state"] == "preparing"
+                finish_preparation(environment; results_dir)
             end
             return environment
         end
-        archive_path === nothing &&
-            error("Sources or selection differ; specify --archive PATH to preserve this run before a new one")
+        error("Sources or selection differ; use --restart to replace the current run")
     end
 
-    archive = archive_path === nothing ? joinpath(RESULTS, "archive") : abspath(ROOT, archive_path)
-    ispath(archive) && error("$(archive) already exists; refusing to overwrite previous results")
-    temporary = archive * ".tmp"
-    ispath(temporary) && error("An incomplete $(temporary) exists; inspect it before restarting")
-    reused = reused_result_hashes(model)
-    mkpath(temporary)
-    for relative in output_directories(model)
-        source = joinpath(RESULTS, relative)
-        if isdir(source)
-            destination = joinpath(temporary, relative)
-            mkpath(dirname(destination))
-            cp(source, destination)
-        end
-    end
-    # Preserve the previous execution record and all its checkpoints before
-    # replacing the working run directory. Keep the active PID lock in place.
-    if isfile(ENVIRONMENT_PATH)
-        old_run = joinpath(temporary, "run")
-        mkpath(old_run)
-        for source in readdir(RUN_DIR; join = true)
-            basename(source) == "analysis.pid" && continue
-            cp(source, joinpath(old_run, basename(source)))
-        end
-    end
-    mv(temporary, archive)
-    mkpath(RUN_DIR)
-    for source in readdir(RUN_DIR; join = true)
+    reused = reused_result_hashes(model; results_dir)
+    mkpath(run_dir)
+    # Replace the current execution record and checkpoints; retain the PID lock.
+    for source in readdir(run_dir; join = true)
         basename(source) == "analysis.pid" && continue
         rm(source; recursive = true)
     end
-    cp(joinpath(ROOT, "Project.toml"), joinpath(RUN_DIR, "Project.toml"))
-    cp(joinpath(ROOT, "Manifest.toml"), joinpath(RUN_DIR, "Manifest.toml"))
+    cp(joinpath(root, "Project.toml"), joinpath(run_dir, "Project.toml"))
+    cp(joinpath(root, "Manifest.toml"), joinpath(run_dir, "Manifest.toml"))
     environment = Dict(
         "source_fingerprint" => fingerprint,
-        "source_commit" => readchomp(`git -C $ROOT rev-parse HEAD`),
-        "working_tree_at_start" => readchomp(`git -C $ROOT status --porcelain`),
+        "source_commit" => readchomp(`git -C $root rev-parse HEAD`),
+        "working_tree_at_start" => readchomp(`git -C $root status --porcelain`),
         "julia_version" => string(VERSION), "created_at" => string(now(UTC)),
         "main_grid" => "full", "nested_grid" => "route",
-        "archive" => archive,
         "model" => model,
         "reused_result_sha256" => reused,
     )
-    atomic_toml(ENVIRONMENT_PATH, environment)
-    atomic_toml(STATUS_PATH, Dict("state" => "preparing", "completed_stages" => String[],
+    atomic_toml(environment_path, environment)
+    atomic_toml(status_path, Dict("state" => "preparing", "completed_stages" => String[],
         "updated_at" => string(now(UTC))))
-    finish_preparation(environment)
-    println("Preserved previous results in $(archive)")
-    println("Recorded source and dependency environment in $(RUN_DIR)")
+    finish_preparation(environment; results_dir)
+    println("Recorded source and dependency environment in $(run_dir)")
     flush(stdout)
     return environment
 end
@@ -269,15 +246,15 @@ end
 
 function main(args)
     if "--help" in args
-        println("Usage: julia --project=. scenarios/run_analysis.jl [--workers N] [--model all|two_country] [--archive PATH] [--prepare-only]")
+        println("Usage: julia --project=. scenarios/run_analysis.jl [--workers N] [--model all|two_country] [--restart] [--prepare-only]")
         println("Runs the full paper designs and existing analytics; rerunning resumes saved batches.")
-        println("Previous results: results/archive/. Logs/status/checkpoints: results/run/.")
+        println("--restart replaces current outputs and checkpoints. Logs/status/checkpoints: results/run/.")
         return
     end
     workers = 8
     prepare_only = false
     model = "all"
-    archive_path = nothing
+    restart = false
     index = 1
     while index <= length(args)
         if args[index] == "--workers"
@@ -290,10 +267,8 @@ function main(args)
             index += 1
             index <= length(args) || error("--model requires all or two_country")
             model = args[index]
-        elseif args[index] == "--archive"
-            index += 1
-            index <= length(args) || error("--archive requires a destination path")
-            archive_path = args[index]
+        elseif args[index] == "--restart"
+            restart = true
         else
             error("Unknown argument $(args[index])")
         end
@@ -302,7 +277,7 @@ function main(args)
     workers > 0 || error("Worker count must be positive")
     mkpath(RUN_DIR)
     FileWatching.Pidfile.mkpidlock(joinpath(RUN_DIR, "analysis.pid"); wait = false) do
-        environment = prepare_run(; model, archive_path)
+        environment = prepare_run(; model, restart)
         prepare_only || run_stages(environment, workers)
     end
     return nothing

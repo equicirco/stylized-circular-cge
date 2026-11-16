@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "b514b70f4e2cd2857ce79d1332ab36cf51dd9138"
+project_hash = "5c70094f9136a5ccb62f10f1d832e5f4d26a6841"
 
 [[deps.ASL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -314,9 +314,9 @@ version = "0.1.1"
 
 [[deps.JCGEOutput]]
 deps = ["Arrow", "CSV", "Dates", "DualSignals", "JCGECalibrate", "JCGECore", "JCGERuntime", "JSON3", "JuMP", "Parquet", "Tables", "Test"]
-git-tree-sha1 = "0b7336f7030fc7a02a4558c9a197446ca12dbc0f"
+git-tree-sha1 = "f03c30bd133f7a155a8f7c843ec03f8762f2d278"
 uuid = "d375a7b0-530a-4732-94fc-3dc39a3a1ffd"
-version = "0.1.1"
+version = "0.1.2"
 
 [[deps.JCGERuntime]]
 deps = ["Distributed", "DualSignals", "JCGECore", "JuMP", "Test"]
@@ -740,7 +740,7 @@ version = "1.11.0"
 deps = ["CSV", "Ipopt", "JCGEBlocks", "JCGECalibrate", "JCGECore", "JCGEOutput", "JCGERuntime", "JuMP"]
 path = "."
 uuid = "ca599265-44c5-4395-b532-dc6e1aa34b14"
-version = "0.1.0"
+version = "0.2.0"
 
 [[deps.SuiteSparse_jll]]
 deps = ["Artifacts", "Libdl", "libblastrampoline_jll"]

@@ -14,6 +14,71 @@ end
     @test_throws ErrorException AnalysisRunnerForTests.selected_stages("unknown")
 end
 
+@testset "current outputs and checkpoint restart" begin
+    mktempdir() do directory
+        run(`git -C $directory init --quiet`)
+        run(`git -C $directory -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet --allow-empty -m fixture`)
+        write(joinpath(directory, "Project.toml"), "name = \"Fixture\"\n")
+        write(joinpath(directory, "Manifest.toml"), "manifest_format = \"2.0\"\n")
+        mkpath(joinpath(directory, "src"))
+        mkpath(joinpath(directory, "data"))
+        results = joinpath(directory, "results")
+        run_dir = joinpath(results, "run")
+        mkpath(run_dir)
+        lock = joinpath(run_dir, "analysis.pid")
+        write(lock, "active lock")
+        for relative in AnalysisRunnerForTests.OUTPUT_DIRECTORIES
+            mkpath(joinpath(results, relative))
+            write(joinpath(results, relative, "old.csv"), "old output")
+        end
+        environment = AnalysisRunnerForTests.prepare_run(; root = directory)
+        @test all(relative -> !ispath(joinpath(results, relative)),
+            AnalysisRunnerForTests.OUTPUT_DIRECTORIES)
+        @test !ispath(joinpath(results, "archive"))
+        @test !haskey(environment, "archive")
+        @test read(lock, String) == "active lock"
+        checkpoints = joinpath(run_dir, "checkpoints")
+        mkpath(checkpoints)
+        checkpoint = joinpath(checkpoints, "batch.jls")
+        write(checkpoint, "completed batch")
+        output = joinpath(results, "two_country", "generated", "current.csv")
+        mkpath(dirname(output))
+        write(output, "current output")
+        @test AnalysisRunnerForTests.prepare_run(; root = directory) == environment
+        @test read(checkpoint, String) == "completed batch"
+        @test read(output, String) == "current output"
+        write(joinpath(directory, "src", "model.jl"), "# changed source\n")
+        @test_throws ErrorException AnalysisRunnerForTests.prepare_run(; root = directory)
+        @test isfile(checkpoint) && isfile(output)
+        for relative in (joinpath("single_country", "generated"),
+                         joinpath("single_country", "analytics"))
+            mkpath(joinpath(results, relative))
+            write(joinpath(results, relative, "current.csv"), "retained single-country output")
+        end
+        single_hashes = AnalysisRunnerForTests.reused_result_hashes("two_country";
+            results_dir = results)
+        replacement = AnalysisRunnerForTests.prepare_run(; root = directory,
+            model = "two_country", restart = true)
+        @test !ispath(checkpoints) && !ispath(output)
+        @test read(lock, String) == "active lock"
+        @test replacement["reused_result_sha256"] == single_hashes
+        @test AnalysisRunnerForTests.reused_result_hashes("two_country";
+            results_dir = results) == single_hashes
+        @test_throws ErrorException AnalysisRunnerForTests.prepare_run(; root = directory)
+        # Finish a preparation interrupted after its environment was recorded.
+        AnalysisRunnerForTests.atomic_toml(joinpath(run_dir, "status.toml"),
+            Dict("state" => "preparing"))
+        mkpath(dirname(output))
+        write(output, "incomplete replacement")
+        @test AnalysisRunnerForTests.prepare_run(; root = directory,
+            model = "two_country") == replacement
+        @test !ispath(output)
+        @test AnalysisRunnerForTests.reused_result_hashes("two_country";
+            results_dir = results) == single_hashes
+        @test !ispath(joinpath(results, "archive"))
+    end
+end
+
 @testset "detached child stream forwarding" begin
     mktempdir() do directory
         path = joinpath(directory, "child.log")
